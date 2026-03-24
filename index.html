@@ -601,10 +601,43 @@ Transaction alert: $12.50 debit at Starbucks"></textarea>
       document.querySelectorAll('.tab')[idx[name]].classList.add('active');
     }
 
+    // ── OTP Banka SMS patterns ────────────────────────────────────────────────
+    // Add OTP-specific patterns at the front so they match first
+    SMS_PATTERNS.unshift(
+      // OTP debit: "placanje", "isplata", "kupovina", "trosak", "zaduzenje"
+      { re: /(?:pla[cć]anje|isplata|kupovina|tro[sš]ak|zaduženje|zaduzenje|teret|debit)[^\d]*([\d.,]+)\s*(rsd|eur|usd|huf|hrk)?/i, type: 'expense' },
+      // OTP credit: "uplata", "odobrenje", "kredit", "priliv"
+      { re: /(?:uplata|odobrenje|kredit|priliv|credit)[^\d]*([\d.,]+)\s*(rsd|eur|usd|huf|hrk)?/i, type: 'income' },
+      // Generic OTP amount pattern: "iznos 1.500,00 RSD"
+      { re: /iznos[:\s]*([\d.,]+)\s*(rsd|eur|usd|huf|hrk)/i, type: 'expense' },
+    );
+
+    // ── Auto-import from URL (iOS Shortcut integration) ───────────────────────
+    function handleURLImport() {
+      const params = new URLSearchParams(window.location.search);
+      const smsText = params.get('sms');
+      if (!smsText) return;
+
+      const t = parseSingleSMS(decodeURIComponent(smsText));
+      if (t) {
+        transactions.push({ id: Date.now(), type: t.type, amount: t.amount, desc: t.desc, date: t.date });
+        save(); updateSummary(); renderList();
+        // Show brief success toast
+        const toast = document.createElement('div');
+        toast.textContent = (t.type === 'income' ? '+ ' : '- ') + fmt(t.amount) + ' imported!';
+        toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:' + (t.type==='income'?'#064e3b':'#7f1d1d') + ';color:#fff;padding:12px 24px;border-radius:12px;font-weight:700;font-size:15px;z-index:9999;box-shadow:0 4px 20px rgba(0,0,0,0.4)';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+        // Clean URL so refreshing doesn't re-import
+        history.replaceState({}, '', window.location.pathname);
+      }
+    }
+
     // ── Init ──────────────────────────────────────────────────────────────────
     document.getElementById('addDate').value = new Date().toISOString().slice(0,10);
     updateSummary();
     renderList();
+    handleURLImport();
 
     // Register service worker for offline use
     if ('serviceWorker' in navigator) {
