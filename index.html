@@ -2,22 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Money Tracker</title>
+
+  <!-- iOS "Add to Home Screen" app settings -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Money" />
+  <meta name="theme-color" content="#0f0f14" />
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- App icon (uses inline SVG as a data URL so no extra files needed for icon fallback) -->
+  <link rel="apple-touch-icon" href="icon.png" />
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: #0f0f14;
       color: #e8e8f0;
       min-height: 100vh;
-      padding: 16px;
+      min-height: -webkit-fill-available;
+      padding: calc(var(--safe-top) + 20px) 16px calc(var(--safe-bottom) + 20px);
+      overscroll-behavior: none;
     }
 
     h1 {
-      font-size: 22px;
-      font-weight: 700;
+      font-size: 24px;
+      font-weight: 800;
       letter-spacing: -0.5px;
       margin-bottom: 20px;
       color: #fff;
@@ -27,28 +47,29 @@
     .summary {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
-      gap: 12px;
+      gap: 10px;
       margin-bottom: 20px;
     }
 
     .card {
       background: #1a1a24;
-      border-radius: 14px;
-      padding: 16px;
+      border-radius: 16px;
+      padding: 14px 12px;
       border: 1px solid #2a2a38;
     }
 
     .card .label {
-      font-size: 11px;
+      font-size: 10px;
       color: #888;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
     }
 
     .card .amount {
-      font-size: 22px;
+      font-size: 18px;
       font-weight: 700;
+      word-break: break-all;
     }
 
     .card.balance .amount { color: #fff; }
@@ -59,19 +80,21 @@
     .tabs {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
+      margin-bottom: 18px;
     }
 
     .tab {
-      padding: 8px 18px;
-      border-radius: 8px;
+      flex: 1;
+      padding: 10px 4px;
+      border-radius: 10px;
       border: none;
       cursor: pointer;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
       background: #1a1a24;
       color: #888;
       transition: all 0.15s;
+      -webkit-appearance: none;
     }
 
     .tab.active {
@@ -92,7 +115,7 @@
 
     .tx {
       background: #1a1a24;
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 14px 16px;
       border: 1px solid #2a2a38;
       display: flex;
@@ -104,9 +127,9 @@
     .tx-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 
     .tx-icon {
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -118,36 +141,32 @@
     .tx-icon.expense { background: #7f1d1d33; }
 
     .tx-desc { font-size: 14px; font-weight: 600; color: #e8e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tx-date { font-size: 11px; color: #666; margin-top: 2px; }
+    .tx-date { font-size: 11px; color: #555; margin-top: 3px; }
 
-    .tx-amount {
-      font-size: 15px;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-
+    .tx-amount { font-size: 15px; font-weight: 700; flex-shrink: 0; }
     .tx-amount.income  { color: #34d399; }
     .tx-amount.expense { color: #f87171; }
 
     .tx-del {
       background: none;
       border: none;
-      color: #555;
+      color: #444;
       cursor: pointer;
-      font-size: 16px;
-      padding: 2px 6px;
+      font-size: 18px;
+      padding: 4px 6px;
       flex-shrink: 0;
+      line-height: 1;
     }
-    .tx-del:hover { color: #f87171; }
 
     .empty {
       text-align: center;
       color: #555;
-      padding: 40px 0;
+      padding: 50px 0;
       font-size: 14px;
+      line-height: 1.6;
     }
 
-    /* Search/filter */
+    /* Filter row */
     .filter-row {
       display: flex;
       gap: 8px;
@@ -158,79 +177,89 @@
       flex: 1;
       background: #1a1a24;
       border: 1px solid #2a2a38;
-      border-radius: 8px;
-      padding: 9px 12px;
+      border-radius: 10px;
+      padding: 10px 12px;
       color: #e8e8f0;
-      font-size: 13px;
+      font-size: 15px;
       outline: none;
+      -webkit-appearance: none;
     }
 
     .filter-row select { flex: 0 0 auto; }
 
-    /* Add form */
+    /* Forms */
     .form-group {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
     }
 
-    .form-group input, .form-group select, .form-group textarea {
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
       background: #1a1a24;
       border: 1px solid #2a2a38;
-      border-radius: 10px;
-      padding: 12px 14px;
+      border-radius: 12px;
+      padding: 14px;
       color: #e8e8f0;
-      font-size: 14px;
+      font-size: 16px; /* 16px prevents iOS zoom on focus */
       outline: none;
       width: 100%;
+      -webkit-appearance: none;
     }
 
     .form-group textarea {
-      resize: vertical;
-      min-height: 80px;
+      resize: none;
+      min-height: 120px;
       font-family: inherit;
     }
 
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
       border-color: #6366f1;
     }
 
+    /* Type toggle */
     .type-toggle {
       display: flex;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
       border: 1px solid #2a2a38;
     }
 
     .type-toggle button {
       flex: 1;
-      padding: 11px;
+      padding: 13px;
       border: none;
       cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
+      font-size: 15px;
+      font-weight: 700;
       background: #1a1a24;
-      color: #666;
+      color: #555;
       transition: all 0.15s;
+      -webkit-appearance: none;
     }
 
     .type-toggle button.active-income  { background: #064e3b; color: #34d399; }
     .type-toggle button.active-expense { background: #7f1d1d; color: #f87171; }
 
+    /* Buttons */
     .btn {
-      padding: 12px;
-      border-radius: 10px;
+      padding: 15px;
+      border-radius: 12px;
       border: none;
       cursor: pointer;
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 700;
       background: #6366f1;
       color: #fff;
       width: 100%;
+      -webkit-appearance: none;
       transition: opacity 0.15s;
     }
 
-    .btn:hover { opacity: 0.88; }
+    .btn:active { opacity: 0.75; }
 
     .btn-outline {
       background: transparent;
@@ -238,9 +267,8 @@
       color: #6366f1;
     }
 
-    /* SMS import */
+    /* SMS parsed results */
     .sms-result {
-      margin-top: 16px;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -248,7 +276,7 @@
 
     .sms-tx {
       background: #1a1a24;
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 12px 14px;
       border: 1px solid #2a2a38;
       display: flex;
@@ -257,15 +285,16 @@
       gap: 10px;
     }
 
-    .sms-tx-info { font-size: 13px; flex: 1; }
-    .sms-tx-info .desc { font-weight: 600; }
-    .sms-tx-info .meta { color: #888; font-size: 11px; margin-top: 2px; }
+    .sms-tx-info { font-size: 13px; flex: 1; min-width: 0; }
+    .sms-tx-info .desc { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sms-tx-info .meta { color: #666; font-size: 11px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     .badge {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
-      padding: 3px 10px;
+      padding: 3px 8px;
       border-radius: 6px;
+      flex-shrink: 0;
     }
 
     .badge.income  { background: #064e3b33; color: #34d399; }
@@ -275,37 +304,26 @@
     .sms-tx-amount.income  { color: #34d399; }
     .sms-tx-amount.expense { color: #f87171; }
 
-    .import-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 4px;
-    }
+    .import-actions { display: flex; gap: 8px; }
 
     .section-label {
-      font-size: 12px;
-      color: #888;
-      margin-bottom: 8px;
-      font-weight: 600;
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 10px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.6px;
     }
 
-    .hint {
-      font-size: 12px;
-      color: #555;
-      line-height: 1.5;
-      margin-top: 6px;
-    }
+    .hint { font-size: 12px; color: #555; line-height: 1.5; }
 
-    .divider {
-      height: 1px;
-      background: #2a2a38;
-      margin: 18px 0;
-    }
+    .divider { height: 1px; background: #2a2a38; margin: 18px 0; }
+
+    .error-msg { color: #f87171; font-size: 13px; margin-top: 8px; }
   </style>
 </head>
 <body>
-  <h1>💰 Money Tracker</h1>
+  <h1>&#128176; Money Tracker</h1>
 
   <!-- Summary -->
   <div class="summary">
@@ -325,15 +343,15 @@
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('transactions')">Transactions</button>
+    <button class="tab active" onclick="switchTab('transactions')">History</button>
     <button class="tab" onclick="switchTab('add')">+ Add</button>
     <button class="tab" onclick="switchTab('sms')">SMS Import</button>
   </div>
 
-  <!-- Transactions panel -->
+  <!-- Transactions -->
   <div class="panel active" id="panel-transactions">
     <div class="filter-row">
-      <input type="text" id="searchInput" placeholder="Search..." oninput="renderList()" />
+      <input type="search" id="searchInput" placeholder="Search..." oninput="renderList()" autocomplete="off" />
       <select id="filterType" onchange="renderList()">
         <option value="all">All</option>
         <option value="income">Income</option>
@@ -343,44 +361,63 @@
     <div class="tx-list" id="txList"></div>
   </div>
 
-  <!-- Add panel -->
+  <!-- Add -->
   <div class="panel" id="panel-add">
     <div class="form-group">
       <div class="type-toggle">
-        <button id="btnExpense" class="active-expense" onclick="setType('expense')">Expense</button>
-        <button id="btnIncome" onclick="setType('income')">Income</button>
+        <button id="btnExpense" class="active-expense" onclick="setType('expense')">&#128308; Expense</button>
+        <button id="btnIncome" onclick="setType('income')">&#128994; Income</button>
       </div>
-      <input type="number" id="addAmount" placeholder="Amount (e.g. 50.00)" min="0" step="0.01" />
-      <input type="text" id="addDesc" placeholder="Description (e.g. Groceries)" />
+      <input type="number" id="addAmount" placeholder="Amount (e.g. 50.00)" inputmode="decimal" min="0" step="0.01" />
+      <input type="text" id="addDesc" placeholder="Description (e.g. Groceries)" autocomplete="off" />
       <input type="date" id="addDate" />
-      <button class="btn" onclick="addTransaction()">Add Transaction</button>
+      <button class="btn" onclick="addTransaction()">Save Transaction</button>
     </div>
   </div>
 
-  <!-- SMS Import panel -->
+  <!-- SMS Import -->
   <div class="panel" id="panel-sms">
     <div class="section-label">Paste Bank SMS Messages</div>
     <div class="form-group">
-      <textarea id="smsInput" placeholder="Paste one or more bank SMS notifications here...&#10;&#10;Examples:&#10;• Your account has been debited $45.00 at Walmart on 03/20/2026&#10;• Credit of $2,500.00 to your account. Salary Mar 2026&#10;• Transaction alert: $12.50 debit from your account at Starbucks"></textarea>
-      <p class="hint">Supports most bank SMS formats. Each line or block is parsed separately.</p>
+      <textarea id="smsInput" placeholder="Paste your bank SMS notifications here. One per line or separated by blank lines.
+
+Examples:
+Your account debited $45.00 at Walmart on 03/20/2026
+Credit of $2,500.00 to your account. Salary
+Transaction alert: $12.50 debit at Starbucks"></textarea>
+      <p class="hint">Works with most bank SMS formats — detects amounts, dates, and merchant names automatically.</p>
       <div class="import-actions">
         <button class="btn" onclick="parseSMS()">Parse Messages</button>
       </div>
     </div>
-
     <div id="smsResult"></div>
   </div>
 
   <script>
-    // ── Storage ──────────────────────────────────────────────────────────────
-    let transactions = JSON.parse(localStorage.getItem('txs') || '[]');
+    // ── Data ─────────────────────────────────────────────────────────────────
+    let transactions = JSON.parse(localStorage.getItem('money_txs') || '[]');
     let addType = 'expense';
 
     function save() {
-      localStorage.setItem('txs', JSON.stringify(transactions));
+      localStorage.setItem('money_txs', JSON.stringify(transactions));
     }
 
-    // ── Summary ──────────────────────────────────────────────────────────────
+    // ── Formatting ────────────────────────────────────────────────────────────
+    function fmt(n) {
+      return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ── Summary ───────────────────────────────────────────────────────────────
     function updateSummary() {
       let income = 0, expense = 0;
       for (const t of transactions) {
@@ -392,67 +429,48 @@
       document.getElementById('balanceAmt').textContent = fmt(income - expense);
     }
 
-    function fmt(n) {
-      return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
-    function fmtDate(iso) {
-      if (!iso) return '';
-      const d = new Date(iso + 'T00:00:00');
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    }
-
-    // ── Render list ──────────────────────────────────────────────────────────
+    // ── Transaction list ──────────────────────────────────────────────────────
     function renderList() {
       const q     = document.getElementById('searchInput').value.toLowerCase();
       const fType = document.getElementById('filterType').value;
       const list  = document.getElementById('txList');
 
       let filtered = transactions.filter(t => {
-        const matchType = fType === 'all' || t.type === fType;
-        const matchQ    = !q || t.desc.toLowerCase().includes(q);
-        return matchType && matchQ;
-      });
-
-      // newest first
-      filtered = filtered.slice().sort((a, b) => {
+        return (fType === 'all' || t.type === fType) &&
+               (!q || t.desc.toLowerCase().includes(q));
+      }).slice().sort((a, b) => {
         if (a.date > b.date) return -1;
         if (a.date < b.date) return 1;
         return b.id - a.id;
       });
 
       if (!filtered.length) {
-        list.innerHTML = '<div class="empty">No transactions yet</div>';
+        list.innerHTML = '<div class="empty">No transactions yet.<br>Tap <b>+ Add</b> or use <b>SMS Import</b>.</div>';
         return;
       }
 
       list.innerHTML = filtered.map(t => `
         <div class="tx">
           <div class="tx-left">
-            <div class="tx-icon ${t.type}">${t.type === 'income' ? '⬆️' : '⬇️'}</div>
+            <div class="tx-icon ${t.type}">${t.type === 'income' ? '&#128994;' : '&#128308;'}</div>
             <div>
               <div class="tx-desc">${esc(t.desc)}</div>
               <div class="tx-date">${fmtDate(t.date)}</div>
             </div>
           </div>
           <span class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '-'}${fmt(t.amount)}</span>
-          <button class="tx-del" onclick="deleteTx(${t.id})" title="Delete">✕</button>
+          <button class="tx-del" onclick="deleteTx(${t.id})">&#215;</button>
         </div>
       `).join('');
     }
 
-    function esc(s) {
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-
     function deleteTx(id) {
+      if (!confirm('Delete this transaction?')) return;
       transactions = transactions.filter(t => t.id !== id);
-      save();
-      updateSummary();
-      renderList();
+      save(); updateSummary(); renderList();
     }
 
-    // ── Add transaction ──────────────────────────────────────────────────────
+    // ── Add form ──────────────────────────────────────────────────────────────
     function setType(type) {
       addType = type;
       document.getElementById('btnIncome').className  = type === 'income'  ? 'active-income'  : '';
@@ -463,74 +481,29 @@
       const amount = parseFloat(document.getElementById('addAmount').value);
       const desc   = document.getElementById('addDesc').value.trim();
       const date   = document.getElementById('addDate').value;
-
       if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
-      if (!desc)                  { alert('Enter a description.'); return; }
-      if (!date)                  { alert('Pick a date.'); return; }
-
+      if (!desc)   { alert('Enter a description.'); return; }
+      if (!date)   { alert('Pick a date.'); return; }
       transactions.push({ id: Date.now(), type: addType, amount, desc, date });
-      save();
-      updateSummary();
-      renderList();
-
-      // reset form
+      save(); updateSummary(); renderList();
       document.getElementById('addAmount').value = '';
       document.getElementById('addDesc').value   = '';
-      document.getElementById('addDate').value   = '';
       switchTab('transactions');
     }
 
-    // ── SMS Parser ───────────────────────────────────────────────────────────
-    // Patterns tuned for common bank/fintech SMS formats
+    // ── SMS parser ────────────────────────────────────────────────────────────
     const SMS_PATTERNS = [
-      // "debited $45.00"  /  "credited $2,500"
-      {
-        re: /(?:debited?|debit(?:ed)? of|withdrawn?|paid|spent|charged)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i,
-        type: 'expense',
-        amountGroup: 1
-      },
-      {
-        re: /(?:credited?|credit(?:ed)? of|received?|deposit(?:ed)?)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i,
-        type: 'income',
-        amountGroup: 1
-      },
-      // "$45.00 debit"
-      {
-        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|withdrawal|charge)/i,
-        type: 'expense',
-        amountGroup: 1
-      },
-      {
-        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|deposit|received)/i,
-        type: 'income',
-        amountGroup: 1
-      },
-      // "Transaction of $X" with debit/credit keyword elsewhere
-      {
-        re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|dr)/i,
-        type: 'expense',
-        amountGroup: 1
-      },
-      {
-        re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|cr)/i,
-        type: 'income',
-        amountGroup: 1
-      },
-      // Generic fallback: amount with DR/CR suffix (Indian/African banks)
-      {
-        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+DR\b/i,
-        type: 'expense',
-        amountGroup: 1
-      },
-      {
-        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+CR\b/i,
-        type: 'income',
-        amountGroup: 1
-      },
+      { re: /(?:debited?|debit(?:ed)? of|withdrawn?|paid|spent|charged)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i, type: 'expense' },
+      { re: /(?:credited?|credit(?:ed)? of|received?|deposit(?:ed)?)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i, type: 'income' },
+      { re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|withdrawal|charge)/i, type: 'expense' },
+      { re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|deposit|received)/i, type: 'income' },
+      { re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|dr)/i, type: 'expense' },
+      { re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|cr)/i, type: 'income' },
+      { re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+DR\b/i, type: 'expense' },
+      { re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+CR\b/i, type: 'income' },
     ];
 
-    // Extract date from SMS text
-    const DATE_PATTERNS = [
+    const DATE_RES = [
       /\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/,
       /\b(\d{4}[\/\-]\d{2}[\/\-]\d{2})\b/,
       /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}/i,
@@ -538,47 +511,32 @@
     ];
 
     function parseDate(text) {
-      for (const p of DATE_PATTERNS) {
+      for (const p of DATE_RES) {
         const m = text.match(p);
-        if (m) {
-          const d = new Date(m[0]);
-          if (!isNaN(d)) {
-            return d.toISOString().slice(0, 10);
-          }
-        }
+        if (m) { const d = new Date(m[0]); if (!isNaN(d)) return d.toISOString().slice(0,10); }
       }
-      return new Date().toISOString().slice(0, 10);
+      return new Date().toISOString().slice(0,10);
     }
 
-    // Extract merchant / description from SMS
     function extractDesc(text) {
-      // look for "at <merchant>", "from <merchant>", "to <merchant>"
       let m = text.match(/\bat\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
       if (m) return m[1].trim();
       m = text.match(/\bfrom\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
       if (m) return m[1].trim();
       m = text.match(/\bto\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
       if (m) return m[1].trim();
-      // fallback: first 40 chars cleaned
-      return text.replace(/\s+/g, ' ').slice(0, 45);
+      return text.replace(/\s+/g,' ').slice(0,45);
     }
 
     function parseSingleSMS(text) {
       text = text.trim();
       if (!text) return null;
-
       for (const pat of SMS_PATTERNS) {
         const m = text.match(pat.re);
         if (m) {
-          const amount = parseFloat(m[pat.amountGroup].replace(/,/g, ''));
+          const amount = parseFloat(m[1].replace(/,/g,''));
           if (!amount || amount <= 0) continue;
-          return {
-            type:   pat.type,
-            amount,
-            desc:   extractDesc(text),
-            date:   parseDate(text),
-            raw:    text
-          };
+          return { type: pat.type, amount, desc: extractDesc(text), date: parseDate(text), raw: text };
         }
       }
       return null;
@@ -587,66 +545,71 @@
     function parseSMS() {
       const raw = document.getElementById('smsInput').value;
       if (!raw.trim()) { alert('Paste some SMS messages first.'); return; }
-
-      // Split by blank lines or by newline if each line looks like its own SMS
       let blocks = raw.split(/\n{2,}/);
       if (blocks.length === 1) blocks = raw.split('\n');
-
       const results = blocks.map(parseSingleSMS).filter(Boolean);
-
       const el = document.getElementById('smsResult');
       if (!results.length) {
-        el.innerHTML = '<p class="hint" style="margin-top:12px;color:#f87171;">Could not detect any transactions. Make sure the messages contain amounts and keywords like debit/credit/charged/received.</p>';
+        el.innerHTML = '<p class="error-msg">Could not detect transactions. Make sure messages contain amounts and words like debit / credit / charged / received.</p>';
         return;
       }
-
+      // Store results for import
+      window._smsResults = results;
       el.innerHTML = `
         <div class="divider"></div>
         <div class="section-label">Found ${results.length} transaction${results.length > 1 ? 's' : ''}</div>
-        <div id="smsParsed" class="sms-result">
-          ${results.map((t, i) => `
-            <div class="sms-tx" id="sms-${i}">
+        <div class="sms-result" style="margin-bottom:14px;">
+          ${results.map(t => `
+            <div class="sms-tx">
               <div class="sms-tx-info">
                 <div class="desc">${esc(t.desc)}</div>
-                <div class="meta">${fmtDate(t.date)} &nbsp;·&nbsp; ${esc(t.raw.slice(0, 60))}${t.raw.length > 60 ? '…' : ''}</div>
+                <div class="meta">${fmtDate(t.date)}</div>
               </div>
               <span class="badge ${t.type}">${t.type}</span>
               <span class="sms-tx-amount ${t.type}">${t.type === 'income' ? '+' : '-'}${fmt(t.amount)}</span>
             </div>
           `).join('')}
         </div>
-        <div class="import-actions" style="margin-top:12px;">
-          <button class="btn" onclick="importAll(${JSON.stringify(results).replace(/"/g,'&quot;')})">Import All</button>
-          <button class="btn btn-outline" onclick="document.getElementById('smsResult').innerHTML='';document.getElementById('smsInput').value=''">Clear</button>
+        <div class="import-actions">
+          <button class="btn" onclick="importAll()">Import All</button>
+          <button class="btn btn-outline" onclick="clearSMS()">Clear</button>
         </div>
       `;
     }
 
-    function importAll(results) {
-      for (const t of results) {
+    function importAll() {
+      for (const t of window._smsResults || []) {
         transactions.push({ id: Date.now() + Math.random(), type: t.type, amount: t.amount, desc: t.desc, date: t.date });
       }
-      save();
-      updateSummary();
-      renderList();
-      document.getElementById('smsResult').innerHTML = '';
-      document.getElementById('smsInput').value = '';
+      save(); updateSummary(); renderList();
+      clearSMS();
       switchTab('transactions');
     }
 
-    // ── Tabs ─────────────────────────────────────────────────────────────────
+    function clearSMS() {
+      document.getElementById('smsResult').innerHTML = '';
+      document.getElementById('smsInput').value = '';
+      window._smsResults = [];
+    }
+
+    // ── Tabs ──────────────────────────────────────────────────────────────────
     function switchTab(name) {
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.getElementById('panel-' + name).classList.add('active');
-      const tabs = { transactions: 0, add: 1, sms: 2 };
-      document.querySelectorAll('.tab')[tabs[name]].classList.add('active');
+      const idx = { transactions: 0, add: 1, sms: 2 };
+      document.querySelectorAll('.tab')[idx[name]].classList.add('active');
     }
 
-    // ── Init ─────────────────────────────────────────────────────────────────
-    document.getElementById('addDate').value = new Date().toISOString().slice(0, 10);
+    // ── Init ──────────────────────────────────────────────────────────────────
+    document.getElementById('addDate').value = new Date().toISOString().slice(0,10);
     updateSummary();
     renderList();
+
+    // Register service worker for offline use
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
   </script>
 </body>
 </html>
