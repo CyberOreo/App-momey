@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Money Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f14;
+      color: #e8e8f0;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+
+    /* Summary cards */
+    .summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: #1a1a24;
+      border-radius: 14px;
+      padding: 16px;
+      border: 1px solid #2a2a38;
+    }
+
+    .card .label {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .card .amount {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .card.balance .amount { color: #fff; }
+    .card.income  .amount { color: #34d399; }
+    .card.expense .amount { color: #f87171; }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tab {
+      padding: 8px 18px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      background: #1a1a24;
+      color: #888;
+      transition: all 0.15s;
+    }
+
+    .tab.active {
+      background: #6366f1;
+      color: #fff;
+    }
+
+    /* Panels */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* Transactions */
+    .tx-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tx {
+      background: #1a1a24;
+      border-radius: 12px;
+      padding: 14px 16px;
+      border: 1px solid #2a2a38;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tx-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
+
+    .tx-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .tx-icon.income  { background: #064e3b33; }
+    .tx-icon.expense { background: #7f1d1d33; }
+
+    .tx-desc { font-size: 14px; font-weight: 600; color: #e8e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tx-date { font-size: 11px; color: #666; margin-top: 2px; }
+
+    .tx-amount {
+      font-size: 15px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .tx-amount.income  { color: #34d399; }
+    .tx-amount.expense { color: #f87171; }
+
+    .tx-del {
+      background: none;
+      border: none;
+      color: #555;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+      flex-shrink: 0;
+    }
+    .tx-del:hover { color: #f87171; }
+
+    .empty {
+      text-align: center;
+      color: #555;
+      padding: 40px 0;
+      font-size: 14px;
+    }
+
+    /* Search/filter */
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .filter-row input, .filter-row select {
+      flex: 1;
+      background: #1a1a24;
+      border: 1px solid #2a2a38;
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: #e8e8f0;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .filter-row select { flex: 0 0 auto; }
+
+    /* Add form */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .form-group input, .form-group select, .form-group textarea {
+      background: #1a1a24;
+      border: 1px solid #2a2a38;
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #e8e8f0;
+      font-size: 14px;
+      outline: none;
+      width: 100%;
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+      font-family: inherit;
+    }
+
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      border-color: #6366f1;
+    }
+
+    .type-toggle {
+      display: flex;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid #2a2a38;
+    }
+
+    .type-toggle button {
+      flex: 1;
+      padding: 11px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      background: #1a1a24;
+      color: #666;
+      transition: all 0.15s;
+    }
+
+    .type-toggle button.active-income  { background: #064e3b; color: #34d399; }
+    .type-toggle button.active-expense { background: #7f1d1d; color: #f87171; }
+
+    .btn {
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 700;
+      background: #6366f1;
+      color: #fff;
+      width: 100%;
+      transition: opacity 0.15s;
+    }
+
+    .btn:hover { opacity: 0.88; }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid #6366f1;
+      color: #6366f1;
+    }
+
+    /* SMS import */
+    .sms-result {
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sms-tx {
+      background: #1a1a24;
+      border-radius: 10px;
+      padding: 12px 14px;
+      border: 1px solid #2a2a38;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sms-tx-info { font-size: 13px; flex: 1; }
+    .sms-tx-info .desc { font-weight: 600; }
+    .sms-tx-info .meta { color: #888; font-size: 11px; margin-top: 2px; }
+
+    .badge {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 6px;
+    }
+
+    .badge.income  { background: #064e3b33; color: #34d399; }
+    .badge.expense { background: #7f1d1d33; color: #f87171; }
+
+    .sms-tx-amount { font-weight: 700; font-size: 14px; flex-shrink: 0; }
+    .sms-tx-amount.income  { color: #34d399; }
+    .sms-tx-amount.expense { color: #f87171; }
+
+    .import-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .section-label {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 8px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #555;
+      line-height: 1.5;
+      margin-top: 6px;
+    }
+
+    .divider {
+      height: 1px;
+      background: #2a2a38;
+      margin: 18px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>💰 Money Tracker</h1>
+
+  <!-- Summary -->
+  <div class="summary">
+    <div class="card balance">
+      <div class="label">Balance</div>
+      <div class="amount" id="balanceAmt">$0.00</div>
+    </div>
+    <div class="card income">
+      <div class="label">Income</div>
+      <div class="amount" id="incomeAmt">$0.00</div>
+    </div>
+    <div class="card expense">
+      <div class="label">Expenses</div>
+      <div class="amount" id="expenseAmt">$0.00</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('transactions')">Transactions</button>
+    <button class="tab" onclick="switchTab('add')">+ Add</button>
+    <button class="tab" onclick="switchTab('sms')">SMS Import</button>
+  </div>
+
+  <!-- Transactions panel -->
+  <div class="panel active" id="panel-transactions">
+    <div class="filter-row">
+      <input type="text" id="searchInput" placeholder="Search..." oninput="renderList()" />
+      <select id="filterType" onchange="renderList()">
+        <option value="all">All</option>
+        <option value="income">Income</option>
+        <option value="expense">Expense</option>
+      </select>
+    </div>
+    <div class="tx-list" id="txList"></div>
+  </div>
+
+  <!-- Add panel -->
+  <div class="panel" id="panel-add">
+    <div class="form-group">
+      <div class="type-toggle">
+        <button id="btnExpense" class="active-expense" onclick="setType('expense')">Expense</button>
+        <button id="btnIncome" onclick="setType('income')">Income</button>
+      </div>
+      <input type="number" id="addAmount" placeholder="Amount (e.g. 50.00)" min="0" step="0.01" />
+      <input type="text" id="addDesc" placeholder="Description (e.g. Groceries)" />
+      <input type="date" id="addDate" />
+      <button class="btn" onclick="addTransaction()">Add Transaction</button>
+    </div>
+  </div>
+
+  <!-- SMS Import panel -->
+  <div class="panel" id="panel-sms">
+    <div class="section-label">Paste Bank SMS Messages</div>
+    <div class="form-group">
+      <textarea id="smsInput" placeholder="Paste one or more bank SMS notifications here...&#10;&#10;Examples:&#10;• Your account has been debited $45.00 at Walmart on 03/20/2026&#10;• Credit of $2,500.00 to your account. Salary Mar 2026&#10;• Transaction alert: $12.50 debit from your account at Starbucks"></textarea>
+      <p class="hint">Supports most bank SMS formats. Each line or block is parsed separately.</p>
+      <div class="import-actions">
+        <button class="btn" onclick="parseSMS()">Parse Messages</button>
+      </div>
+    </div>
+
+    <div id="smsResult"></div>
+  </div>
+
+  <script>
+    // ── Storage ──────────────────────────────────────────────────────────────
+    let transactions = JSON.parse(localStorage.getItem('txs') || '[]');
+    let addType = 'expense';
+
+    function save() {
+      localStorage.setItem('txs', JSON.stringify(transactions));
+    }
+
+    // ── Summary ──────────────────────────────────────────────────────────────
+    function updateSummary() {
+      let income = 0, expense = 0;
+      for (const t of transactions) {
+        if (t.type === 'income') income += t.amount;
+        else expense += t.amount;
+      }
+      document.getElementById('incomeAmt').textContent  = fmt(income);
+      document.getElementById('expenseAmt').textContent = fmt(expense);
+      document.getElementById('balanceAmt').textContent = fmt(income - expense);
+    }
+
+    function fmt(n) {
+      return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '';
+      const d = new Date(iso + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    // ── Render list ──────────────────────────────────────────────────────────
+    function renderList() {
+      const q     = document.getElementById('searchInput').value.toLowerCase();
+      const fType = document.getElementById('filterType').value;
+      const list  = document.getElementById('txList');
+
+      let filtered = transactions.filter(t => {
+        const matchType = fType === 'all' || t.type === fType;
+        const matchQ    = !q || t.desc.toLowerCase().includes(q);
+        return matchType && matchQ;
+      });
+
+      // newest first
+      filtered = filtered.slice().sort((a, b) => {
+        if (a.date > b.date) return -1;
+        if (a.date < b.date) return 1;
+        return b.id - a.id;
+      });
+
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty">No transactions yet</div>';
+        return;
+      }
+
+      list.innerHTML = filtered.map(t => `
+        <div class="tx">
+          <div class="tx-left">
+            <div class="tx-icon ${t.type}">${t.type === 'income' ? '⬆️' : '⬇️'}</div>
+            <div>
+              <div class="tx-desc">${esc(t.desc)}</div>
+              <div class="tx-date">${fmtDate(t.date)}</div>
+            </div>
+          </div>
+          <span class="tx-amount ${t.type}">${t.type === 'income' ? '+' : '-'}${fmt(t.amount)}</span>
+          <button class="tx-del" onclick="deleteTx(${t.id})" title="Delete">✕</button>
+        </div>
+      `).join('');
+    }
+
+    function esc(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function deleteTx(id) {
+      transactions = transactions.filter(t => t.id !== id);
+      save();
+      updateSummary();
+      renderList();
+    }
+
+    // ── Add transaction ──────────────────────────────────────────────────────
+    function setType(type) {
+      addType = type;
+      document.getElementById('btnIncome').className  = type === 'income'  ? 'active-income'  : '';
+      document.getElementById('btnExpense').className = type === 'expense' ? 'active-expense' : '';
+    }
+
+    function addTransaction() {
+      const amount = parseFloat(document.getElementById('addAmount').value);
+      const desc   = document.getElementById('addDesc').value.trim();
+      const date   = document.getElementById('addDate').value;
+
+      if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
+      if (!desc)                  { alert('Enter a description.'); return; }
+      if (!date)                  { alert('Pick a date.'); return; }
+
+      transactions.push({ id: Date.now(), type: addType, amount, desc, date });
+      save();
+      updateSummary();
+      renderList();
+
+      // reset form
+      document.getElementById('addAmount').value = '';
+      document.getElementById('addDesc').value   = '';
+      document.getElementById('addDate').value   = '';
+      switchTab('transactions');
+    }
+
+    // ── SMS Parser ───────────────────────────────────────────────────────────
+    // Patterns tuned for common bank/fintech SMS formats
+    const SMS_PATTERNS = [
+      // "debited $45.00"  /  "credited $2,500"
+      {
+        re: /(?:debited?|debit(?:ed)? of|withdrawn?|paid|spent|charged)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i,
+        type: 'expense',
+        amountGroup: 1
+      },
+      {
+        re: /(?:credited?|credit(?:ed)? of|received?|deposit(?:ed)?)\s+(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)/i,
+        type: 'income',
+        amountGroup: 1
+      },
+      // "$45.00 debit"
+      {
+        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|withdrawal|charge)/i,
+        type: 'expense',
+        amountGroup: 1
+      },
+      {
+        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|deposit|received)/i,
+        type: 'income',
+        amountGroup: 1
+      },
+      // "Transaction of $X" with debit/credit keyword elsewhere
+      {
+        re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:debit|dr)/i,
+        type: 'expense',
+        amountGroup: 1
+      },
+      {
+        re: /transaction\s+(?:alert\s*:?\s*)?(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS)?\$?([\d,]+(?:\.\d+)?)\s+(?:credit|cr)/i,
+        type: 'income',
+        amountGroup: 1
+      },
+      // Generic fallback: amount with DR/CR suffix (Indian/African banks)
+      {
+        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+DR\b/i,
+        type: 'expense',
+        amountGroup: 1
+      },
+      {
+        re: /(?:USD|INR|NGN|GBP|EUR|KES|ZAR|GHS|Rs\.?)?\s*([\d,]+(?:\.\d+)?)\s+CR\b/i,
+        type: 'income',
+        amountGroup: 1
+      },
+    ];
+
+    // Extract date from SMS text
+    const DATE_PATTERNS = [
+      /\b(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/,
+      /\b(\d{4}[\/\-]\d{2}[\/\-]\d{2})\b/,
+      /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}/i,
+      /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}/i,
+    ];
+
+    function parseDate(text) {
+      for (const p of DATE_PATTERNS) {
+        const m = text.match(p);
+        if (m) {
+          const d = new Date(m[0]);
+          if (!isNaN(d)) {
+            return d.toISOString().slice(0, 10);
+          }
+        }
+      }
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    // Extract merchant / description from SMS
+    function extractDesc(text) {
+      // look for "at <merchant>", "from <merchant>", "to <merchant>"
+      let m = text.match(/\bat\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
+      if (m) return m[1].trim();
+      m = text.match(/\bfrom\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
+      if (m) return m[1].trim();
+      m = text.match(/\bto\s+([A-Za-z0-9\s&'.\-]{2,30}?)(?:\s+on\b|\s+\d|\.|,|$)/i);
+      if (m) return m[1].trim();
+      // fallback: first 40 chars cleaned
+      return text.replace(/\s+/g, ' ').slice(0, 45);
+    }
+
+    function parseSingleSMS(text) {
+      text = text.trim();
+      if (!text) return null;
+
+      for (const pat of SMS_PATTERNS) {
+        const m = text.match(pat.re);
+        if (m) {
+          const amount = parseFloat(m[pat.amountGroup].replace(/,/g, ''));
+          if (!amount || amount <= 0) continue;
+          return {
+            type:   pat.type,
+            amount,
+            desc:   extractDesc(text),
+            date:   parseDate(text),
+            raw:    text
+          };
+        }
+      }
+      return null;
+    }
+
+    function parseSMS() {
+      const raw = document.getElementById('smsInput').value;
+      if (!raw.trim()) { alert('Paste some SMS messages first.'); return; }
+
+      // Split by blank lines or by newline if each line looks like its own SMS
+      let blocks = raw.split(/\n{2,}/);
+      if (blocks.length === 1) blocks = raw.split('\n');
+
+      const results = blocks.map(parseSingleSMS).filter(Boolean);
+
+      const el = document.getElementById('smsResult');
+      if (!results.length) {
+        el.innerHTML = '<p class="hint" style="margin-top:12px;color:#f87171;">Could not detect any transactions. Make sure the messages contain amounts and keywords like debit/credit/charged/received.</p>';
+        return;
+      }
+
+      el.innerHTML = `
+        <div class="divider"></div>
+        <div class="section-label">Found ${results.length} transaction${results.length > 1 ? 's' : ''}</div>
+        <div id="smsParsed" class="sms-result">
+          ${results.map((t, i) => `
+            <div class="sms-tx" id="sms-${i}">
+              <div class="sms-tx-info">
+                <div class="desc">${esc(t.desc)}</div>
+                <div class="meta">${fmtDate(t.date)} &nbsp;·&nbsp; ${esc(t.raw.slice(0, 60))}${t.raw.length > 60 ? '…' : ''}</div>
+              </div>
+              <span class="badge ${t.type}">${t.type}</span>
+              <span class="sms-tx-amount ${t.type}">${t.type === 'income' ? '+' : '-'}${fmt(t.amount)}</span>
+            </div>
+          `).join('')}
+        </div>
+        <div class="import-actions" style="margin-top:12px;">
+          <button class="btn" onclick="importAll(${JSON.stringify(results).replace(/"/g,'&quot;')})">Import All</button>
+          <button class="btn btn-outline" onclick="document.getElementById('smsResult').innerHTML='';document.getElementById('smsInput').value=''">Clear</button>
+        </div>
+      `;
+    }
+
+    function importAll(results) {
+      for (const t of results) {
+        transactions.push({ id: Date.now() + Math.random(), type: t.type, amount: t.amount, desc: t.desc, date: t.date });
+      }
+      save();
+      updateSummary();
+      renderList();
+      document.getElementById('smsResult').innerHTML = '';
+      document.getElementById('smsInput').value = '';
+      switchTab('transactions');
+    }
+
+    // ── Tabs ─────────────────────────────────────────────────────────────────
+    function switchTab(name) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('panel-' + name).classList.add('active');
+      const tabs = { transactions: 0, add: 1, sms: 2 };
+      document.querySelectorAll('.tab')[tabs[name]].classList.add('active');
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    document.getElementById('addDate').value = new Date().toISOString().slice(0, 10);
+    updateSummary();
+    renderList();
+  </script>
+</body>
+</html>
