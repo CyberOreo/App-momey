@@ -78,3 +78,30 @@ coverage.xml
 .dmypy.json
 dmypy.json
 .pytype/
+
+# ML models
+*.pickle
+*.pt
+*.pth
+data/ml_model.pkl
+
+# Backtest and journal exports
+data/journal/
+data/backtest_*.csv
+
+# OS generated
+Thumbs.db
+._*
+.Spotlight-V100
+
+# Database WAL files
+*.db-shm
+*.db-wal
+
+# Virtual env (additional patterns)
+.env.bak
+venv.bak/
+
+# Profiling
+*.prof
+*.lprof

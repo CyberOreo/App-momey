@@ -1,0 +1,137 @@
+version: "3.9"
+
+# ────────────────────────────────────────────────────────────────────────────
+# PolyBTC Trader — Docker Compose
+#
+# Default configuration uses SQLite (no Postgres required).
+# Uncomment the postgres service and update DATABASE_URL to use PostgreSQL.
+# ────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Trading Bot ─────────────────────────────────────────────────────────────
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: polybtc-trader:latest
+    container_name: polybtc-bot
+    restart: unless-stopped
+
+    env_file:
+      - .env                        # load all secrets from .env
+
+    environment:
+      # These override values from .env for container-specific paths.
+      LOG_FILE: /app/logs/trading.log
+      DATABASE_URL: sqlite+aiosqlite:///./data/trading.db
+
+    volumes:
+      - bot_data:/app/data          # persistent database and ML model
+      - bot_logs:/app/logs          # persistent log files
+      - ./config:/app/config:ro     # read-only config mount
+
+    # Only needed when connecting to postgres service below.
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    # Resource limits (adjust based on your VPS plan)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.50"
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+
+  # ── Backtest runner (one-shot) ───────────────────────────────────────────────
+  backtest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: polybtc-trader:latest
+    container_name: polybtc-backtest
+    restart: "no"                   # run once and exit
+
+    env_file:
+      - .env
+
+    environment:
+      PAPER_TRADING: "true"
+      DATABASE_URL: sqlite+aiosqlite:///./data/backtest.db
+
+    volumes:
+      - bot_data:/app/data
+      - bot_logs:/app/logs
+      - ./config:/app/config:ro
+
+    command: >
+      python scripts/run_backtest.py
+        --days 30
+        --balance 1000
+        --output data/backtest_latest.csv
+
+    profiles:
+      - tools                       # only started with: docker compose --profile tools up backtest
+
+
+  # ── PostgreSQL (optional, production) ────────────────────────────────────────
+  # Uncomment to enable PostgreSQL. Also update DATABASE_URL in the bot service:
+  #   DATABASE_URL: postgresql+asyncpg://polybtc:secret@postgres:5432/polybtc
+  #
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: polybtc-postgres
+  #   restart: unless-stopped
+  #
+  #   environment:
+  #     POSTGRES_DB: polybtc
+  #     POSTGRES_USER: polybtc
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+  #
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U polybtc -d polybtc"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #
+  #   ports:
+  #     - "127.0.0.1:5432:5432"     # bind to localhost only for security
+
+
+# ── Named Volumes ─────────────────────────────────────────────────────────────
+volumes:
+  bot_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data              # maps to ./data on the host
+
+  bot_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs              # maps to ./logs on the host
+
+  # postgres_data:
+  #   driver: local

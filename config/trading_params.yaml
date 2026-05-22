@@ -1,0 +1,249 @@
+# ────────────────────────────────────────────────────────────────────────────
+# PolyBTC Trader — Trading Parameter Reference
+#
+# This file documents every tunable parameter in the trading system.
+# Actual values are loaded from environment variables (see .env.example).
+# This YAML is for documentation and tooling reference only.
+# ────────────────────────────────────────────────────────────────────────────
+
+application:
+  # Human-readable name shown in logs and Telegram messages.
+  app_name: "PolyBTC Trader"
+
+  # Deployment environment label. Used in logs and dashboard.
+  # Accepted: development | staging | production
+  environment: "development"
+
+  # CRITICAL: Set to true for paper trading (no real funds at risk).
+  # Only disable once you have thoroughly tested in paper mode.
+  paper_trading: true
+
+  # Loguru log level. DEBUG produces very verbose output.
+  # Accepted: DEBUG | INFO | WARNING | ERROR
+  log_level: "INFO"
+
+  # Path for the rotating log file. Directory is created automatically.
+  log_file: "logs/trading.log"
+
+
+polymarket:
+  # CLOB API base URL. Do not change unless Polymarket changes their endpoint.
+  base_url: "https://clob.polymarket.com"
+
+  # Gamma (markets metadata) API base URL.
+  gamma_url: "https://gamma-api.polymarket.com"
+
+  # Polygon mainnet chain ID. Always 137 for real trading.
+  chain_id: 137
+
+
+binance:
+  # Binance WebSocket combined stream base URL.
+  ws_url: "wss://stream.binance.com:9443/ws"
+
+  # Binance REST API base URL. Used for historical klines in the backtest runner.
+  rest_url: "https://api.binance.com/api/v3"
+
+
+database:
+  # SQLite is the default and requires no setup.
+  # Switch to PostgreSQL for production deployments (better concurrency).
+  # SQLite:    sqlite+aiosqlite:///./data/trading.db
+  # Postgres:  postgresql+asyncpg://user:pass@host:5432/dbname
+  url: "sqlite+aiosqlite:///./data/trading.db"
+
+
+capital:
+  # Starting paper balance in USDC. Defines the scale of all position sizes.
+  # In live mode this is ignored (actual balance fetched from wallet).
+  paper_balance: 1000.0
+
+
+risk_management:
+  # Maximum fraction of balance to risk on a single trade.
+  # 0.02 = 2% risk per trade. Conservative traders use 0.01.
+  max_risk_per_trade_pct: 0.02
+
+  # Daily loss limit as a fraction of start-of-day balance.
+  # When daily P&L drops below -(balance * this), trading halts until midnight.
+  # 0.05 = 5% daily loss cap.
+  max_daily_drawdown_pct: 0.05
+
+  # Number of consecutive losing trades that trigger a cooldown period.
+  # After this many losses in a row, trading pauses for cooldown_minutes.
+  max_consecutive_losses: 3
+
+  # Duration of the cooldown period in minutes.
+  # During cooldown no new positions are opened.
+  cooldown_minutes: 60
+
+  # Maximum number of simultaneously open positions.
+  # Fewer positions = more concentrated risk but lower transaction costs.
+  max_open_positions: 3
+
+  # Maximum fraction of balance that can be deployed across all open positions.
+  # 0.20 = never commit more than 20% of total balance at once.
+  max_total_exposure_pct: 0.20
+
+
+execution_quality:
+  # Minimum ConfidenceScorer score (0–100) required to open a trade.
+  # 65 is the production default. Lower in test settings (50).
+  min_confidence_threshold: 65.0
+
+  # Minimum total order-book liquidity in USDC.
+  # Prevents trading on thin markets where slippage would be severe.
+  min_liquidity_usdc: 500.0
+
+  # Maximum allowable bid/ask spread as a fraction (0.08 = 8%).
+  # Wide spreads indicate illiquid or manipulated markets.
+  max_spread_pct: 0.08
+
+  # Maximum estimated slippage as a fraction (0.01 = 1%).
+  # Computed by walking the order book for our intended size.
+  max_slippage_pct: 0.01
+
+  # Minimum time to market resolution in hours.
+  # Avoids entering positions that expire before any technical trend develops.
+  min_time_to_resolution_hours: 2.0
+
+  # Maximum time to market resolution in hours.
+  # Very long-dated markets have high uncertainty; 168h = 1 week.
+  max_time_to_resolution_hours: 168.0
+
+
+position_sizing:
+  # When true, uses the fractional Kelly Criterion for sizing.
+  # When false, uses a fixed percentage of balance.
+  use_kelly: true
+
+  # The Kelly fraction multiplier. Full Kelly (1.0) is very aggressive;
+  # 0.25 (quarter-Kelly) is a conservative industry standard.
+  kelly_fraction: 0.25
+
+  # Hard floor for position size in USDC.
+  # Even the smallest Kelly calculation will produce at least this much.
+  min_position_usdc: 10.0
+
+  # Hard ceiling for position size in USDC.
+  # No single trade can exceed this regardless of Kelly output.
+  max_position_usdc: 200.0
+
+
+strategy:
+  # RSI bounds for generating YES (long) signals.
+  # RSI in [50, 70] indicates bullish momentum without being overbought.
+  rsi_long_min: 50.0
+  rsi_long_max: 70.0
+
+  # RSI bounds for generating NO (short) signals.
+  # RSI in [30, 50] indicates bearish momentum without being oversold.
+  rsi_short_min: 30.0
+  rsi_short_max: 50.0
+
+  # Minimum volume ratio (current_volume / 20-bar_MA) to confirm a signal.
+  # 1.2 means volume must be at least 20% above the moving average.
+  min_volume_ratio: 1.2
+
+  # When true, volume must exceed min_volume_ratio for any signal to fire.
+  # When false, volume is scored but not required (used in testing).
+  require_volume_confirmation: true
+
+
+sentiment:
+  # Set to true to enable CryptoPanic + Fear & Greed index integration.
+  # Requires a valid cryptopanic_api_key.
+  sentiment_enabled: false
+
+
+indicator_engine:
+  # EMA periods used for trend detection.
+  ema_periods: [20, 50, 200]
+
+  # RSI period (Wilder smoothing).
+  rsi_period: 14
+
+  # MACD fast/slow/signal periods (standard settings).
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+
+  # ATR period for volatility measurement.
+  atr_period: 14
+
+  # Volume MA period for volume ratio calculation.
+  volume_ma_period: 20
+
+  # Momentum (rate-of-change) lookback period in bars.
+  momentum_period: 10
+
+  # Minimum candles required before any indicators are computed.
+  min_candles: 200
+
+
+multi_timeframe:
+  # Weights applied to each timeframe when computing the consensus direction.
+  # Must sum to 1.0. Higher weight = more influence on signal direction.
+  timeframe_weights:
+    "1h": 0.40
+    "4h": 0.30
+    "15m": 0.20
+    "5m": 0.10
+
+  # Minimum absolute overall_score for a timeframe to "agree" on a direction.
+  # 0.15 means the score must cross ±15% of the neutral zone.
+  alignment_threshold: 0.15
+
+  # Minimum number of timeframes that must agree for multi-TF confirmation.
+  min_aligned_timeframes: 2
+
+
+backtesting:
+  # Default starting balance for paper backtests.
+  default_initial_balance: 1000.0
+
+  # Default number of days of history to fetch in run_backtest.py.
+  default_days: 30
+
+  # Simulated Polymarket taker fee rate applied to each trade.
+  simulated_fee_rate: 0.001   # 0.1%
+
+  # Resolution price for winning trades (Polymarket converges to 1.0).
+  win_resolution_price: 0.97
+
+  # Resolution price for losing trades (Polymarket converges to 0.0).
+  loss_resolution_price: 0.03
+
+
+regime_detection:
+  # Bollinger Band period for breakout detection.
+  bollinger_period: 20
+
+  # Number of standard deviations for Bollinger Band width.
+  bollinger_std: 2.0
+
+  # Lookback period for realized volatility computation (bars).
+  volatility_lookback: 50
+
+  # Rolling window for realized volatility calculation (bars).
+  volatility_window: 20
+
+  # Volatility regime classification thresholds (annualized %).
+  low_vol_threshold: 0.45      # < 45% annualized = LOW
+  medium_vol_threshold: 0.75   # 45-75% = MEDIUM
+  high_vol_threshold: 1.20     # 75-120% = HIGH
+  # >= 120% = EXTREME
+
+  # Minimum price series length for Hurst exponent computation.
+  hurst_min_prices: 20
+
+
+reconnect:
+  # Maximum number of reconnect attempts before giving up.
+  max_reconnect_attempts: 10
+
+  # Initial backoff delay in seconds (doubles on each failure).
+  reconnect_base_delay: 1.0
+
+  # Maximum backoff delay cap in seconds.
+  reconnect_max_delay: 60.0
