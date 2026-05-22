@@ -363,22 +363,66 @@ class MarketConditionDetector:
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
-        # Wilder smoothing
-        def _wilder_smooth(arr: np.ndarray, p: int) -> np.ndarray:
-            """Wilder running sum / smoothing for ATR / DM."""
-            result = np.empty(len(arr))
-            result[:] = np.nan
+        # ── Wilder smoothing helpers ──────────────────────────────────────────
+        # Two distinct smoothing flavours are needed:
+        #
+        # 1. For TR and ±DM (price-magnitude series):
+        #    seed = sum(first p values)   ← Wilder's "initial sum"
+        #    update = prev * (p-1)/p + current
+        #    Result stays in price units (not capped at 100).
+        #
+        # 2. For DX → ADX (percentage series already 0–100):
+        #    seed = mean(first p valid DX values)
+        #    update = (prev * (p-1) + current) / p   ← equivalent EMA alpha=1/p
+        #    Result stays in [0, 100].
+
+        def _wilder_sum_smooth(arr: np.ndarray, p: int) -> np.ndarray:
+            """
+            Wilder smoothing seeded with the initial *sum* of ``p`` elements.
+            Used for TR, +DM, -DM (price-magnitude arrays).
+            """
+            result = np.full(len(arr), np.nan)
             if len(arr) < p:
                 return result
-            result[p - 1] = np.sum(arr[:p])
-            alpha = (p - 1) / p
+            result[p - 1] = float(np.sum(arr[:p]))
+            alpha_keep = (p - 1) / p
             for i in range(p, len(arr)):
-                result[i] = result[i - 1] * alpha + arr[i]
+                result[i] = result[i - 1] * alpha_keep + arr[i]
             return result
 
-        smooth_tr = _wilder_smooth(tr, period)
-        smooth_plus = _wilder_smooth(plus_dm, period)
-        smooth_minus = _wilder_smooth(minus_dm, period)
+        def _wilder_ema_smooth(arr: np.ndarray, p: int) -> np.ndarray:
+            """
+            Wilder smoothing seeded with the initial *mean* of ``p`` elements.
+            Used for DX → ADX (percentage arrays that must stay in [0, 100]).
+            alpha = 1/p  (Wilder EMA)
+            """
+            result = np.full(len(arr), np.nan)
+            # Skip leading zeros/NaNs to find the first window of real DX values
+            # (DX is 0 before enough TR/DM data exist; real signal starts later)
+            # We look for the first index where DX is non-zero or we have p values
+            # after the warm-up of the DI computation (≈ period bars in)
+            finite = np.where(np.isfinite(arr))[0]
+            if len(finite) < p:
+                return result
+            start = int(finite[0])
+            if start + p > len(arr):
+                return result
+            seed_slice = arr[start: start + p]
+            if not np.all(np.isfinite(seed_slice)):
+                return result
+            seed_end = start + p - 1
+            result[seed_end] = float(np.mean(seed_slice))
+            alpha = 1.0 / p
+            for i in range(seed_end + 1, len(arr)):
+                if np.isfinite(arr[i]):
+                    result[i] = result[i - 1] * (1.0 - alpha) + arr[i] * alpha
+                else:
+                    result[i] = result[i - 1]
+            return result
+
+        smooth_tr = _wilder_sum_smooth(tr, period)
+        smooth_plus = _wilder_sum_smooth(plus_dm, period)
+        smooth_minus = _wilder_sum_smooth(minus_dm, period)
 
         with np.errstate(divide="ignore", invalid="ignore"):
             plus_di = np.where(smooth_tr > 0, 100.0 * smooth_plus / smooth_tr, 0.0)
@@ -386,8 +430,8 @@ class MarketConditionDetector:
             di_sum = plus_di + minus_di
             dx = np.where(di_sum > 0, 100.0 * np.abs(plus_di - minus_di) / di_sum, 0.0)
 
-        # ADX = Wilder smooth of DX
-        smooth_dx = _wilder_smooth(dx, period)
+        # ADX = Wilder EMA of DX (mean-seeded, stays in [0, 100])
+        smooth_dx = _wilder_ema_smooth(dx, period)
 
         # Find the last non-NaN ADX value
         valid = smooth_dx[~np.isnan(smooth_dx)]
