@@ -58,6 +58,16 @@ def _parse_args() -> argparse.Namespace:
         metavar="LEVEL",
         help="Logging verbosity level.",
     )
+    parser.add_argument(
+        "--five-min",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the 5-minute BTC up/down strategy. "
+            "Uses tick-level order flow instead of multi-hour indicators. "
+            "Scans every 30 seconds and requires order flow to be ready (~90s on startup)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -346,6 +356,85 @@ async def _main(args: argparse.Namespace) -> None:
         balance=settings.paper_balance,
         log_level=args.log_level,
     )
+
+    if args.five_min:
+        # ── 5-minute strategy mode ─────────────────────────────────────────────
+        logger.info("Starting in 5-MINUTE strategy mode")
+        from src.market.order_flow import OrderFlowAnalyzer
+        from src.market.scanner import MarketScanner
+        from src.trading.five_min_strategy import FiveMinStrategy
+        from src.risk.manager import RiskManager
+        from src.trading.paper_trading import PaperTrader
+
+        order_flow = OrderFlowAnalyzer(large_trade_usdc=50_000)
+        strategy = FiveMinStrategy(order_flow=order_flow, settings=settings)
+        risk_mgr = RiskManager(settings=settings)
+        await risk_mgr.initialize(settings.paper_balance)
+        paper_trader = PaperTrader(
+            initial_balance=settings.paper_balance,
+            settings=settings,
+        )
+
+        import aiohttp
+        _stop = asyncio.Event()
+
+        async def _on_markets(markets):
+            """Called every 30s with fresh list of active 5-min markets."""
+            import aiohttp as _aiohttp
+            async with _aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{settings.binance_rest_url}/ticker/price?symbol=BTCUSDT",
+                    timeout=_aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    data = await resp.json()
+                    btc_price = float(data["price"])
+
+            strategy.update_btc_price(btc_price)
+
+            if not order_flow.is_ready():
+                logger.info("[5MIN] Waiting for order flow data (~90s on first start)")
+                return
+
+            risk_state = await risk_mgr.get_state()
+            if not risk_state.can_trade:
+                logger.warning("[5MIN] Trading halted by risk manager")
+                return
+
+            for market in markets:
+                signal = strategy.evaluate_market(market, candles_1m=[])
+                if signal is None:
+                    continue
+                can_exec, reason = await risk_mgr.can_execute(signal, None)
+                if not can_exec:
+                    logger.info(f"[5MIN] Signal blocked: {reason}")
+                    continue
+                trade = await paper_trader.place_order(signal, size_usdc=20.0)
+                logger.success(
+                    f"[5MIN] Trade opened | {signal.direction.value} | "
+                    f"conf={signal.confidence:.0f} | edge={signal.edge*100:.1f}% | "
+                    f"fair={signal.fair_value_estimate:.2f} vs mkt={signal.price:.2f}"
+                )
+
+        signal.signal(signal.SIGINT, lambda s, f: _stop.set())
+        signal.signal(signal.SIGTERM, lambda s, f: _stop.set())
+
+        # Import scanner (needs a Polymarket client — use stub in paper mode)
+        class _StubClient:
+            async def get_btc_markets(self):
+                return []
+
+        from src.core.database import init_db, MarketRepository
+        import os as _os
+        _os.makedirs("data", exist_ok=True)
+        db_engine = await init_db(settings.database_url)
+        db = MarketRepository(db_engine)
+        scanner = MarketScanner(_StubClient(), settings, db)
+
+        await asyncio.gather(
+            order_flow.start(),
+            scanner.run_five_min_continuous(interval_seconds=30, callback=_on_markets),
+        )
+        return
 
     _orchestrator = BotOrchestrator(settings)
 

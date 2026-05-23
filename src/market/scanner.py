@@ -21,6 +21,16 @@ _BTC_KEYWORDS = (
     "satoshi",
 )
 
+_FIVE_MIN_KEYWORDS = (
+    "5 minute",
+    "5-minute",
+    "5min",
+    "next 5",
+    "5 min",
+    "five minute",
+    "in 5",
+)
+
 
 def _is_btc_market(question: str) -> bool:
     """Return True if the market question refers to BTC/Bitcoin."""
@@ -352,3 +362,91 @@ class MarketScanner:
         """Signal the continuous loop to exit after the current cycle."""
         self._stop_event.set()
         logger.info("MarketScanner stop requested")
+
+    # ── 5-minute market scanning ──────────────────────────────────────────────
+
+    async def scan_five_minute_markets(self) -> List[Market]:
+        """
+        Find all active 5-minute BTC up/down markets on Polymarket.
+
+        Returns markets sorted by liquidity (highest first) that are:
+        - Active and contain BTC keywords
+        - Identified as 5-minute resolution markets by question text
+        - Between 90 seconds and 360 seconds from resolution (sweet spot)
+        - Have both YES and NO tokens
+        """
+        try:
+            all_markets = await self._client.get_btc_markets()
+        except Exception as exc:
+            logger.error("5-min scan failed", error=str(exc))
+            return []
+
+        result: List[Market] = []
+        now = datetime.utcnow()
+
+        for market in all_markets:
+            if not market.active:
+                continue
+            if market.end_date <= now:
+                continue
+            if not _is_btc_market(market.question):
+                continue
+            if market.yes_token is None or market.no_token is None:
+                continue
+
+            question_lower = market.question.lower()
+            is_five_min = any(kw in question_lower for kw in _FIVE_MIN_KEYWORDS)
+            if not is_five_min:
+                continue
+
+            secs = market.hours_to_resolution * 3600
+            if not (90 <= secs <= 360):
+                continue
+
+            result.append(market)
+
+        # Sort by liquidity so we trade the deepest markets first
+        result.sort(key=lambda m: m.liquidity, reverse=True)
+
+        logger.info(
+            "[5MIN] Scan complete",
+            found=len(result),
+            questions=[m.question[:60] for m in result[:3]],
+        )
+        return result
+
+    async def run_five_min_continuous(
+        self,
+        interval_seconds: float = 30.0,
+        callback: Optional[Callable[[List[Market]], Coroutine[Any, Any, None]]] = None,
+    ) -> None:
+        """
+        Scan for 5-minute markets every 30 seconds (not 5 minutes like the
+        standard scanner — 5-min markets open and close constantly).
+        """
+        self._stop_event.clear()
+        logger.info("[5MIN] Scanner started", interval_seconds=interval_seconds)
+
+        while not self._stop_event.is_set():
+            cycle_start = asyncio.get_event_loop().time()
+            try:
+                markets = await self.scan_five_minute_markets()
+                if markets and callback is not None:
+                    try:
+                        await callback(markets)
+                    except Exception as exc:
+                        logger.error("[5MIN] Callback error", error=str(exc))
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("[5MIN] Scanner loop error", error=str(exc))
+
+            elapsed = asyncio.get_event_loop().time() - cycle_start
+            sleep_time = max(0.0, interval_seconds - elapsed)
+            if sleep_time > 0:
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=sleep_time)
+                except asyncio.TimeoutError:
+                    pass
+
+        logger.info("[5MIN] Scanner stopped")
