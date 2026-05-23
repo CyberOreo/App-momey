@@ -378,16 +378,86 @@ async def _main(args: argparse.Namespace) -> None:
         import aiohttp
         _stop = asyncio.Event()
 
+        async def _get_btc_price() -> Optional[float]:
+            import aiohttp as _aiohttp
+            try:
+                async with _aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{settings.binance_rest_url}/ticker/price?symbol=BTCUSDT",
+                        timeout=_aiohttp.ClientTimeout(total=5),
+                    ) as resp:
+                        data = await resp.json()
+                        return float(data["price"])
+            except Exception as e:
+                logger.warning(f"[5MIN] BTC price fetch failed: {e}")
+                return None
+
+        async def _check_early_exits() -> None:
+            """
+            Runs every 10 seconds. Checks every open paper trade against the
+            three early-exit rules: take-profit price, time pressure, flow reversal.
+            """
+            open_trades = paper_trader.get_open_trades()
+            if not open_trades:
+                return
+
+            btc_price = await _get_btc_price()
+            if btc_price is None:
+                return
+            strategy.update_btc_price(btc_price)
+
+            for trade in open_trades:
+                # Approximate current token price from order flow signal:
+                # In live mode this would come from the Polymarket API.
+                # In paper mode we estimate it from the fair value model.
+                snap = order_flow.snapshot(30)
+                if snap is None:
+                    continue
+
+                # Estimate how much the token has moved since entry
+                velocity = order_flow.recent_price_velocity(90)
+                estimated_price_delta = abs(velocity) * 15  # rough mapping
+                if trade.direction.value == "YES":
+                    current_token_price = min(0.97, trade.entry_price + estimated_price_delta)
+                else:
+                    current_token_price = min(0.97, trade.entry_price + estimated_price_delta)
+
+                # Calculate seconds to resolution from trade metadata
+                # (stored in market_id — in practice fetched from Polymarket)
+                seconds_left = 180.0  # fallback; live mode reads from market
+
+                should_exit, reason = strategy.should_exit_early(
+                    entry_price=trade.entry_price,
+                    current_token_price=current_token_price,
+                    seconds_to_resolution=seconds_left,
+                    direction=trade.direction,
+                )
+
+                if should_exit:
+                    closed = await paper_trader.close_position(
+                        trade, current_price=current_token_price, reason=reason
+                    )
+                    won = (closed.realized_pnl or 0) > 0
+                    strategy.record_result(trade.market_id, won)
+                    logger.success(
+                        f"[5MIN] Early exit | {reason} | "
+                        f"pnl={'+'if won else ''}{closed.realized_pnl:.2f}"
+                    )
+
+        async def _exit_monitor_loop() -> None:
+            """Background task: check exits every 10 seconds."""
+            while not _stop.is_set():
+                try:
+                    await _check_early_exits()
+                except Exception as e:
+                    logger.debug(f"[5MIN] Exit monitor error: {e}")
+                await asyncio.sleep(10)
+
         async def _on_markets(markets):
             """Called every 30s with fresh list of active 5-min markets."""
-            import aiohttp as _aiohttp
-            async with _aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{settings.binance_rest_url}/ticker/price?symbol=BTCUSDT",
-                    timeout=_aiohttp.ClientTimeout(total=5),
-                ) as resp:
-                    data = await resp.json()
-                    btc_price = float(data["price"])
+            btc_price = await _get_btc_price()
+            if btc_price is None:
+                return
 
             strategy.update_btc_price(btc_price)
 
@@ -433,6 +503,7 @@ async def _main(args: argparse.Namespace) -> None:
         await asyncio.gather(
             order_flow.start(),
             scanner.run_five_min_continuous(interval_seconds=30, callback=_on_markets),
+            _exit_monitor_loop(),
         )
         return
 

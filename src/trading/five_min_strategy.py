@@ -77,6 +77,12 @@ class FiveMinStrategy:
     MIN_LIQUIDITY_USDC = 150.0
     MAX_SPREAD_PCT = 0.06
     BLACKLIST_DURATION_MINUTES = 30
+
+    # Early exit thresholds
+    TAKE_PROFIT_PRICE = 0.82        # sell if token reaches this (locked ~64% gain)
+    TIME_PRESSURE_SECONDS = 120     # with this many seconds left, take profit if up
+    TIME_PRESSURE_MIN_GAIN = 0.20   # minimum gain % to exit under time pressure
+    FLOW_REVERSAL_THRESHOLD = -0.20 # if flow flips this hard against us, exit
     MIN_CONSECUTIVE_LOSSES_TO_BLACKLIST = 2
     MIN_DATA_AGE_SECONDS = 90       # need this much order flow history
     MAX_PRICE_STALENESS_SECONDS = 8  # skip if BTC price feed is stale
@@ -591,6 +597,71 @@ class FiveMinStrategy:
         )
 
     # ── Market memory stats ───────────────────────────────────────────────────
+
+    # ── Early exit logic ──────────────────────────────────────────────────────
+
+    def should_exit_early(
+        self,
+        entry_price: float,
+        current_token_price: float,
+        seconds_to_resolution: float,
+        direction: Direction,
+    ) -> tuple[bool, str]:
+        """
+        Called every ~10 seconds for each open position.
+        Returns (should_exit, reason) so the executor can act.
+
+        Three triggers:
+
+        1. TAKE PROFIT — token price hit 0.82+
+           You entered at ~0.50, it's now 0.82. That's a 64% gain.
+           Waiting for 1.00 risks a last-minute reversal wiping it out.
+           Sell now, pocket the profit, move on.
+
+        2. TIME PRESSURE — under 2 minutes left AND already in profit 20%+
+           With 90-120 seconds left BTC can easily reverse. If you're sitting
+           on a 20%+ gain, take it. The expected extra gain from waiting
+           doesn't justify the reversal risk.
+
+        3. FLOW REVERSAL — the order flow that drove our entry completely flipped
+           This is the most important one. It means our thesis broke.
+           We said 'buyers are in control' — now sellers have taken over.
+           Get out before the price catches up with the new reality.
+        """
+        gain_pct = (current_token_price - entry_price) / entry_price
+
+        # ── Trigger 1: Price hit take-profit level ────────────────────────────
+        if current_token_price >= self.TAKE_PROFIT_PRICE:
+            return True, (
+                f"Take profit hit: token={current_token_price:.2f} >= {self.TAKE_PROFIT_PRICE} "
+                f"(gain={gain_pct*100:.1f}%)"
+            )
+
+        # ── Trigger 2: Time pressure with profit ─────────────────────────────
+        if (seconds_to_resolution <= self.TIME_PRESSURE_SECONDS
+                and gain_pct >= self.TIME_PRESSURE_MIN_GAIN):
+            return True, (
+                f"Time pressure exit: {seconds_to_resolution:.0f}s left, "
+                f"gain={gain_pct*100:.1f}% >= {self.TIME_PRESSURE_MIN_GAIN*100:.0f}%"
+            )
+
+        # ── Trigger 3: Order flow completely reversed ─────────────────────────
+        snap = self._flow.snapshot(30)
+        if snap is not None:
+            flow = snap.signal_strength
+            # If we went YES (bullish thesis), exit if flow is now strongly bearish
+            if direction == Direction.YES and flow <= self.FLOW_REVERSAL_THRESHOLD:
+                return True, (
+                    f"Flow reversal exit: was bullish, flow now {flow:.2f} "
+                    f"(threshold {self.FLOW_REVERSAL_THRESHOLD})"
+                )
+            # If we went NO (bearish thesis), exit if flow is now strongly bullish
+            if direction == Direction.NO and flow >= -self.FLOW_REVERSAL_THRESHOLD:
+                return True, (
+                    f"Flow reversal exit: was bearish, flow now {flow:.2f}"
+                )
+
+        return False, ""
 
     def get_market_stats(self) -> List[dict]:
         results = []
