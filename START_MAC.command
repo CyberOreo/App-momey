@@ -32,7 +32,7 @@ if [ ! -d "venv" ]; then
     echo "  Setting up virtual environment (first time only)..."
     python3 -m venv venv
     echo "  Installing dependencies..."
-    venv/bin/pip install -r requirements.txt -q
+    venv/bin/pip install -r requirements_core.txt -q
     echo "  Done!"
     echo ""
 fi

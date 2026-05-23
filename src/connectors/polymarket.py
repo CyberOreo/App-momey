@@ -10,8 +10,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import aiohttp
-from eth_account import Account
-from eth_account.messages import encode_defunct
 from loguru import logger
 
 from src.core.config import Settings
@@ -30,6 +28,14 @@ def _l1_sign(private_key: str, timestamp: int, nonce: int, method: str, path: st
     Level-1 (wallet) signature.
     Signs the string ``{timestamp}{nonce}{method}{path}`` with the Ethereum private key.
     """
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+    except ImportError:
+        raise RuntimeError(
+            "eth-account is required for live trading. "
+            "Run: pip install eth-account>=0.10.0"
+        )
     message = f"{timestamp}{nonce}{method}{path}"
     msg_hash = encode_defunct(text=message)
     signed = Account.sign_message(msg_hash, private_key=private_key)
@@ -47,6 +53,13 @@ def _l2_sign(api_secret: str, timestamp: int, method: str, path: str, body: str 
 
 
 def _l1_headers(private_key: str, method: str, path: str) -> Dict[str, str]:
+    try:
+        from eth_account import Account
+    except ImportError:
+        raise RuntimeError(
+            "eth-account is required for live trading. "
+            "Run: pip install eth-account>=0.10.0"
+        )
     ts = _now_ms()
     nonce = 0
     sig = _l1_sign(private_key, ts, nonce, method.upper(), path)

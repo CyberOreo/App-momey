@@ -1,0 +1,14 @@
+# ── Core packages — required to run the 5-min engine ─────────────────────────
+# All of these install via pre-built wheels — no C compiler needed.
+# Run: pip install -r requirements_core.txt
+
+aiohttp>=3.9.0
+aiosqlite>=0.20.0
+loguru>=0.7.0
+numpy>=1.26.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+rich>=13.7.0
+SQLAlchemy>=2.0.0
+websockets>=12.0

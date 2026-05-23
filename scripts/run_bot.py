@@ -137,9 +137,6 @@ class BotOrchestrator:
         from src.monitoring.metrics import MetricsCollector
         from src.monitoring.telegram_alerts import TelegramAlerter
         from src.analytics.journal import TradeJournal
-        from src.intelligence.sentiment import SentimentAnalyzer
-        from src.intelligence.regime import RegimeDetector
-        from src.intelligence.ml_scorer import MLScorer
 
         logger.info("Initialising PolyBTC Trader", mode="paper" if self._settings.paper_trading else "LIVE")
 
@@ -157,10 +154,22 @@ class BotOrchestrator:
         self._telegram = TelegramAlerter(self._settings)
         self._journal = TradeJournal(db=self._db, export_dir="data/journal")
 
-        # Intelligence
-        self._sentiment_analyzer = SentimentAnalyzer(self._settings)
-        self._regime_detector = RegimeDetector()
-        self._ml_scorer = MLScorer(model_path="data/ml_model.pkl")
+        # Intelligence (optional — requires scikit-learn/pandas)
+        try:
+            from src.intelligence.sentiment import SentimentAnalyzer
+            from src.intelligence.regime import RegimeDetector
+            from src.intelligence.ml_scorer import MLScorer
+            self._sentiment_analyzer = SentimentAnalyzer(self._settings)
+            self._regime_detector = RegimeDetector()
+            self._ml_scorer = MLScorer(model_path="data/ml_model.pkl")
+        except ImportError as _ie:
+            logger.warning(
+                f"Intelligence modules unavailable ({_ie}). "
+                "Install scikit-learn and pandas to enable ML scoring."
+            )
+            self._sentiment_analyzer = None
+            self._regime_detector = None
+            self._ml_scorer = None
 
         logger.info("All subsystems initialised")
 

@@ -208,6 +208,22 @@ class Handler(BaseHTTPRequestHandler):
             if _is_running():
                 self._json({"ok": False, "msg": "Already running"})
                 return
+            # Check core dependencies are installed
+            missing = []
+            for pkg in ("aiohttp", "aiosqlite", "loguru", "numpy", "pydantic", "websockets"):
+                try:
+                    __import__(pkg)
+                except ImportError:
+                    missing.append(pkg)
+            if missing:
+                self._json({
+                    "ok": False,
+                    "msg": (
+                        f"Missing packages: {', '.join(missing)}. "
+                        "Run: pip install -r requirements_core.txt"
+                    ),
+                })
+                return
             data = self._read_body()
             live = data.get("live", False)
             five_min = data.get("five_min", False)
