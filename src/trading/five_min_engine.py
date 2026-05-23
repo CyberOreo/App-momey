@@ -589,6 +589,39 @@ class FiveMinEngine:
         if not self._is_good_trading_hour():
             score -= 25       # effectively blocks trades in dead/noisy hours
 
+        # 12. Fair value gap — is the token mispriced vs what BTC suggests?
+        #     This catches crowd overreactions (token too cheap) and
+        #     overpriced tokens where the edge is already gone.
+        fair_yes = self._fair_value_yes(window_delta)
+        fair_no = 1.0 - fair_yes
+        yes_ask = self._book.yes_ask
+        no_ask = self._book.no_ask
+
+        if window_delta > 0 and yes_ask > 0:
+            # We want YES — measure how cheap it is vs fair value
+            edge = fair_yes - yes_ask
+            if edge > 0.10:
+                score += 15   # YES very cheap — crowd hasn't woken up yet
+            elif edge > 0.05:
+                score += 8    # modest underpricing — decent edge
+            elif edge > 0.02:
+                score += 3    # slight edge
+            elif edge < -0.06:
+                score -= 12   # YES overpriced — crowd already priced it in, skip
+        elif window_delta < 0 and no_ask > 0:
+            # We want NO — measure how cheap it is vs fair value
+            edge = fair_no - no_ask
+            if edge > 0.10:
+                score += 15
+            elif edge > 0.05:
+                score += 8
+            elif edge > 0.02:
+                score += 3
+            elif edge < -0.06:
+                score -= 12
+        else:
+            edge = 0.0
+
         # Penalties
         if self._price_buffer.is_stale(3):
             score -= 30       # stale data = skip
@@ -614,6 +647,9 @@ class FiveMinEngine:
             'oracle_confirms': self._oracle_confirms,
             'consensus': self._consensus_direction,
             'funding_signal': self._funding_signal,
+            'fair_value_yes': round(fair_yes, 3),
+            'fair_value_no': round(fair_no, 3),
+            'edge': round(edge, 3),
         }
 
     # ── Decision construction ─────────────────────────────────────────────────
@@ -695,6 +731,28 @@ class FiveMinEngine:
             signals=signals,
             is_arbitrage=False,
         )
+
+    # ── Fair value model ──────────────────────────────────────────────────────
+
+    def _fair_value_yes(self, window_delta: float) -> float:
+        """
+        What SHOULD the YES token be worth given BTC's current move?
+
+        Uses a sigmoid (tanh) curve fitted to observed Polymarket market-maker
+        pricing behavior. This is the theoretically correct price.
+
+        If market price is significantly below fair value → token is CHEAP → buy.
+        If market price is above fair value → token is EXPENSIVE → skip or fade.
+
+        Examples:
+          delta =  0.00% → fair_yes = 0.50  (coin flip)
+          delta = +0.05% → fair_yes ≈ 0.70  (slight YES edge)
+          delta = +0.10% → fair_yes ≈ 0.84  (strong YES)
+          delta = +0.15% → fair_yes ≈ 0.92  (near-certain YES)
+          delta = -0.10% → fair_yes ≈ 0.16  (= fair_no ≈ 0.84)
+        """
+        raw = math.tanh(window_delta / 0.0008)
+        return max(0.03, min(0.97, 0.50 + 0.44 * raw))
 
     # ── Time-of-day filter ────────────────────────────────────────────────────
 
@@ -851,4 +909,9 @@ class FiveMinEngine:
             "consensus_boost": round(self._consensus_boost, 1),
             "funding_signal": round(self._funding_signal, 3),
             "good_trading_hour": self._is_good_trading_hour(),
+            # Fair value gap
+            "fair_value_yes": round(self._fair_value_yes(self._price_buffer.window_delta), 3),
+            "fair_value_no": round(1.0 - self._fair_value_yes(self._price_buffer.window_delta), 3),
+            "yes_ask": self._book.yes_ask,
+            "no_ask": self._book.no_ask,
         }

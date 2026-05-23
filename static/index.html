@@ -362,6 +362,11 @@
           <div class="eng-val neu" id="eng-funding">—</div>
           <div style="font-size:11px;color:var(--muted)" id="eng-funding-sub">futures pressure</div>
         </div>
+        <div class="eng-cell">
+          <div class="eng-label">Fair Value YES</div>
+          <div class="eng-val neu" id="eng-fv-yes">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-fv-edge">vs market price</div>
+        </div>
       </div>
     </div>
 
@@ -660,6 +665,21 @@ function updateDashboard(d) {
     document.getElementById('eng-funding-sub').textContent =
       fund > 0.3 ? 'longs squeezed (bearish)' :
       fund < -0.3 ? 'shorts squeezed (bullish)' : 'neutral';
+
+    // Fair value gap
+    const fvYes = eng.fair_value_yes || 0;
+    const mktYes = eng.yes_ask || 0;
+    document.getElementById('eng-fv-yes').textContent = fvYes > 0 ? fvYes.toFixed(3) : '—';
+    if (fvYes > 0 && mktYes > 0) {
+      const gap = (fvYes - mktYes).toFixed(3);
+      const gapNum = parseFloat(gap);
+      const fvEl = document.getElementById('eng-fv-yes');
+      fvEl.className = 'eng-val ' + (gapNum > 0.05 ? 'pos' : gapNum < -0.05 ? 'neg' : 'neu');
+      document.getElementById('eng-fv-edge').textContent =
+        gapNum > 0.05 ? `+${gap} CHEAP buy` :
+        gapNum < -0.05 ? `${gap} overpriced skip` :
+        `gap ${gap}`;
+    }
   } else {
     enginePanel.classList.remove('active');
   }
