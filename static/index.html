@@ -219,6 +219,29 @@
     font-size: 13px; color: var(--yellow); margin-bottom: 20px;
     display: flex; align-items: center; gap: 10px;
   }
+
+  /* ── 5-min Engine panel ── */
+  .engine-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 22px;
+    margin-bottom: 24px; display: none;
+    border-top: 3px solid var(--accent2);
+  }
+  .engine-panel.active { display: block; }
+  .engine-title {
+    font-size: 12px; font-weight: 700; color: var(--accent2);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 14px;
+  }
+  .engine-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 12px;
+  }
+  .eng-cell { text-align: center; }
+  .eng-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .eng-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .eng-bar-wrap { height: 6px; background: var(--bg2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .eng-bar { height: 100%; border-radius: 3px; transition: width .5s, background .5s; }
 </style>
 </head>
 <body>
@@ -252,6 +275,7 @@
     <!-- Controls -->
     <div class="controls">
       <button class="btn btn-start" id="btn-start" onclick="startBot()">▶ START BOT</button>
+      <button class="btn btn-start" id="btn-start-5m" onclick="startBot5Min()" style="background:var(--accent2);color:#000">⚡ 5-MIN ENGINE</button>
       <button class="btn btn-stop" id="btn-stop" onclick="stopBot()" disabled>⏹ STOP BOT</button>
       <div class="mode-toggle">
         <span class="toggle-label">Paper</span>
@@ -286,6 +310,43 @@
         <div class="card-label">Open Positions</div>
         <div class="card-value neu" id="card-positions">0</div>
         <div class="card-sub">of 3 max</div>
+      </div>
+    </div>
+
+    <!-- 5-Min Engine live panel (visible when engine mode is running) -->
+    <div class="engine-panel" id="engine-panel">
+      <div class="engine-title">⚡ 5-Min Engine — Live Signal Feed</div>
+      <div class="engine-grid">
+        <div class="eng-cell">
+          <div class="eng-label">Window Delta</div>
+          <div class="eng-val neu" id="eng-delta">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-delta-sub">BTC vs window open</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">Time to Close</div>
+          <div class="eng-val neu" id="eng-secs">—</div>
+          <div style="font-size:11px;color:var(--muted)">seconds left</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">VPIN</div>
+          <div class="eng-val neu" id="eng-vpin">—</div>
+          <div class="eng-bar-wrap"><div class="eng-bar" id="eng-vpin-bar" style="width:0%;background:var(--accent)"></div></div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">Book Imbalance</div>
+          <div class="eng-val neu" id="eng-imb">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-imb-sub">—</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">BTC Price</div>
+          <div class="eng-val neu" id="eng-btc">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-open">open: —</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">Trades Fired</div>
+          <div class="eng-val neu" id="eng-trades">0</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-arb">arb: check sum_ask</div>
+        </div>
       </div>
     </div>
 
@@ -508,15 +569,58 @@ function updateDashboard(d) {
   if (d.running) {
     badge.className = 'status-badge running';
     dot.className = 'dot on';
-    statusText.textContent = 'Running';
+    statusText.textContent = d.engine && d.engine.mode ? '5-Min Engine' : 'Running';
     document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-start-5m').disabled = true;
     document.getElementById('btn-stop').disabled = false;
   } else {
     badge.className = 'status-badge stopped';
     dot.className = 'dot off';
     statusText.textContent = 'Stopped';
     document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-start-5m').disabled = false;
     document.getElementById('btn-stop').disabled = true;
+  }
+
+  // Engine panel
+  const eng = d.engine || {};
+  const enginePanel = document.getElementById('engine-panel');
+  if (eng.mode === 'five_min_engine' && d.running) {
+    enginePanel.classList.add('active');
+    const wd = eng.window_delta_pct || 0;
+    const wdEl = document.getElementById('eng-delta');
+    wdEl.textContent = (wd >= 0 ? '+' : '') + wd.toFixed(3) + '%';
+    wdEl.className = 'eng-val ' + (wd > 0.004 ? 'pos' : wd < -0.004 ? 'neg' : 'neu');
+    document.getElementById('eng-delta-sub').textContent =
+      wd > 0.004 ? 'BTC UP — leaning YES' : wd < -0.004 ? 'BTC DOWN — leaning NO' : 'near open price';
+
+    const secs = eng.seconds_to_close || 0;
+    const secsEl = document.getElementById('eng-secs');
+    secsEl.textContent = Math.round(secs);
+    secsEl.className = 'eng-val ' + (secs <= 30 ? 'pos' : secs <= 60 ? 'yellow' : 'neu');
+
+    const vpin = eng.vpin || 0;
+    document.getElementById('eng-vpin').textContent = vpin.toFixed(3);
+    const vpinBar = document.getElementById('eng-vpin-bar');
+    vpinBar.style.width = Math.min(100, vpin * 100) + '%';
+    vpinBar.style.background = vpin > 0.5 ? 'var(--red)' : vpin > 0.35 ? 'var(--yellow)' : 'var(--accent2)';
+
+    const imb = eng.book_imbalance || 0;
+    document.getElementById('eng-imb').textContent = (imb >= 0 ? '+' : '') + imb.toFixed(3);
+    document.getElementById('eng-imb-sub').textContent =
+      imb > 0.1 ? 'YES pressure' : imb < -0.1 ? 'NO pressure' : 'balanced';
+
+    const btc = eng.btc_price || 0;
+    document.getElementById('eng-btc').textContent = btc > 0 ? '$' + btc.toLocaleString('en-US', {maximumFractionDigits:0}) : '—';
+    document.getElementById('eng-open').textContent = 'open: $' + (eng.window_open_price || 0).toLocaleString('en-US', {maximumFractionDigits:0});
+
+    document.getElementById('eng-trades').textContent = eng.trades || 0;
+    const sumAsk = eng.sum_ask || 0;
+    document.getElementById('eng-arb').textContent = sumAsk > 0
+      ? 'YES+NO=' + sumAsk.toFixed(3) + (sumAsk < 0.985 ? ' ⚡ ARB!' : '')
+      : '—';
+  } else {
+    enginePanel.classList.remove('active');
   }
 
   // Paper banner
@@ -677,6 +781,26 @@ async function startBot() {
       body: JSON.stringify({ live }),
     }).then(r => r.json());
     if (r.ok) showMsg('✓ ' + r.msg, 'var(--green)');
+    else showMsg('✗ ' + r.msg, 'var(--red)');
+  } catch(e) {
+    showMsg('✗ Connection error', 'var(--red)');
+  }
+  poll();
+}
+
+async function startBot5Min() {
+  const live = document.getElementById('live-toggle').checked;
+  if (live) {
+    if (!confirm('⚠️ LIVE 5-Min Engine — real money at risk. Continue?')) return;
+  }
+  document.getElementById('btn-start-5m').disabled = true;
+  try {
+    const r = await fetch('/api/start', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ live, five_min: true }),
+    }).then(r => r.json());
+    if (r.ok) showMsg('⚡ 5-Min Engine started', 'var(--accent2)');
     else showMsg('✗ ' + r.msg, 'var(--red)');
   } catch(e) {
     showMsg('✗ Connection error', 'var(--red)');

@@ -118,6 +118,16 @@ def _get_stats() -> dict:
     all_wins = [t for t in all_closed if t.get("outcome") == "win"]
     win_rate = round(len(all_wins) / len(all_closed) * 100, 1) if all_closed else 0.0
     paper = _getenv("PAPER_TRADING", "true").lower() == "true"
+
+    # 5-min engine status (written every 2s by run_bot.py --five-min)
+    engine: dict = {}
+    engine_path = ROOT / "data" / "engine_status.json"
+    try:
+        if engine_path.exists() and (time.time() - engine_path.stat().st_mtime) < 10:
+            engine = json.loads(engine_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
     return {
         "running": _is_running(),
         "paper_trading": paper,
@@ -131,6 +141,7 @@ def _get_stats() -> dict:
         "losses_today": len(losses),
         "recent_trades": trades[:15],
         "open_pos_list": open_pos,
+        "engine": engine,
     }
 
 
@@ -199,9 +210,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             data = self._read_body()
             live = data.get("live", False)
+            five_min = data.get("five_min", False)
             args = [sys.executable, str(ROOT / "scripts" / "run_bot.py")]
             if live:
                 args.append("--live")
+            if five_min:
+                args.append("--five-min")
             with _log_lock:
                 _log_lines.clear()
             try:

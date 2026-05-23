@@ -358,153 +358,171 @@ async def _main(args: argparse.Namespace) -> None:
     )
 
     if args.five_min:
-        # ── 5-minute strategy mode ─────────────────────────────────────────────
-        logger.info("Starting in 5-MINUTE strategy mode")
-        from src.market.order_flow import OrderFlowAnalyzer
-        from src.market.scanner import MarketScanner
-        from src.trading.five_min_strategy import FiveMinStrategy
-        from src.risk.manager import RiskManager
+        # ── 5-minute research engine mode (1-second decision loop) ────────────
+        logger.info("Starting in 5-MINUTE ENGINE mode — 1-second decision loop")
+        import json as _json
+        import websockets as _ws
+        from src.trading.five_min_engine import FiveMinEngine, BookSnapshot
         from src.trading.paper_trading import PaperTrader
+        from src.market.scanner import MarketScanner
+        from src.core.database import init_db, MarketRepository
 
-        order_flow = OrderFlowAnalyzer(large_trade_usdc=50_000)
-        strategy = FiveMinStrategy(order_flow=order_flow, settings=settings)
-        risk_mgr = RiskManager(settings=settings)
-        await risk_mgr.initialize(settings.paper_balance)
+        _stop = asyncio.Event()
+        signal.signal(signal.SIGINT, lambda s, f: _stop.set())
+        signal.signal(signal.SIGTERM, lambda s, f: _stop.set())
+
         paper_trader = PaperTrader(
             initial_balance=settings.paper_balance,
             settings=settings,
         )
+        _trade_count = [0]
 
-        import aiohttp
-        _stop = asyncio.Event()
+        async def _handle_decision(decision) -> None:
+            _trade_count[0] += 1
+            logger.success(
+                f"[ENGINE] #{_trade_count[0]} {decision.action} | "
+                f"conf={decision.confidence:.0f} | T-{decision.seconds_to_close:.0f}s | "
+                f"delta={decision.window_delta*100:+.3f}% | "
+                f"entry={decision.entry_price:.3f} | ${decision.size_usdc:.0f}"
+                + (" | ARBITRAGE" if decision.is_arbitrage else "")
+            )
+            for r in decision.reasons:
+                logger.debug(f"  → {r}")
 
-        async def _get_btc_price() -> Optional[float]:
-            import aiohttp as _aiohttp
-            try:
-                async with _aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"{settings.binance_rest_url}/ticker/price?symbol=BTCUSDT",
-                        timeout=_aiohttp.ClientTimeout(total=5),
-                    ) as resp:
-                        data = await resp.json()
-                        return float(data["price"])
-            except Exception as e:
-                logger.warning(f"[5MIN] BTC price fetch failed: {e}")
-                return None
+        engine = FiveMinEngine(
+            balance=settings.paper_balance,
+            max_risk_pct=settings.max_risk_per_trade_pct,
+            on_decision=lambda d: asyncio.create_task(_handle_decision(d)),
+        )
 
-        async def _check_early_exits() -> None:
-            """
-            Runs every 10 seconds. Checks every open paper trade against the
-            three early-exit rules: take-profit price, time pressure, flow reversal.
-            """
-            open_trades = paper_trader.get_open_trades()
-            if not open_trades:
-                return
+        # Write engine status to disk every 2 seconds for the web dashboard
+        _status_path = _ROOT / "data" / "engine_status.json"
 
-            btc_price = await _get_btc_price()
-            if btc_price is None:
-                return
-            strategy.update_btc_price(btc_price)
-
-            for trade in open_trades:
-                # Approximate current token price from order flow signal:
-                # In live mode this would come from the Polymarket API.
-                # In paper mode we estimate it from the fair value model.
-                snap = order_flow.snapshot(30)
-                if snap is None:
-                    continue
-
-                # Estimate how much the token has moved since entry
-                velocity = order_flow.recent_price_velocity(90)
-                estimated_price_delta = abs(velocity) * 15  # rough mapping
-                if trade.direction.value == "YES":
-                    current_token_price = min(0.97, trade.entry_price + estimated_price_delta)
-                else:
-                    current_token_price = min(0.97, trade.entry_price + estimated_price_delta)
-
-                # Calculate seconds to resolution from trade metadata
-                # (stored in market_id — in practice fetched from Polymarket)
-                seconds_left = 180.0  # fallback; live mode reads from market
-
-                should_exit, reason = strategy.should_exit_early(
-                    entry_price=trade.entry_price,
-                    current_token_price=current_token_price,
-                    seconds_to_resolution=seconds_left,
-                    direction=trade.direction,
-                )
-
-                if should_exit:
-                    closed = await paper_trader.close_position(
-                        trade, current_price=current_token_price, reason=reason
-                    )
-                    won = (closed.realized_pnl or 0) > 0
-                    strategy.record_result(trade.market_id, won)
-                    logger.success(
-                        f"[5MIN] Early exit | {reason} | "
-                        f"pnl={'+'if won else ''}{closed.realized_pnl:.2f}"
-                    )
-
-        async def _exit_monitor_loop() -> None:
-            """Background task: check exits every 10 seconds."""
+        async def _write_status() -> None:
+            os.makedirs(str(_ROOT / "data"), exist_ok=True)
             while not _stop.is_set():
                 try:
-                    await _check_early_exits()
+                    st = engine.status()
+                    st.update({
+                        "mode": "five_min_engine",
+                        "paper": settings.paper_trading,
+                        "trades": _trade_count[0],
+                    })
+                    _status_path.write_text(_json.dumps(st), encoding="utf-8")
+                except Exception:
+                    pass
+                await asyncio.sleep(2)
+
+        # Binance combined stream: ticker price + aggTrades for VPIN
+        async def _binance_feed() -> None:
+            url = (
+                "wss://stream.binance.com:9443/stream"
+                "?streams=btcusdt@ticker/btcusdt@aggTrade"
+            )
+            delay = 1.0
+            while not _stop.is_set():
+                try:
+                    async with _ws.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                        logger.info("[ENGINE] Binance stream connected")
+                        delay = 1.0
+                        async for raw in ws:
+                            if _stop.is_set():
+                                break
+                            try:
+                                msg = _json.loads(raw)
+                                data = msg.get("data", msg)
+                                stream = msg.get("stream", "")
+                                if "ticker" in stream:
+                                    engine.on_price(float(data["c"]))
+                                elif "aggTrade" in stream:
+                                    engine.on_trade(
+                                        float(data["p"]),
+                                        float(data["q"]),
+                                        bool(data["m"]),
+                                    )
+                            except Exception as e:
+                                logger.debug(f"[ENGINE] Stream parse: {e}")
+                except asyncio.CancelledError:
+                    break
                 except Exception as e:
-                    logger.debug(f"[5MIN] Exit monitor error: {e}")
-                await asyncio.sleep(10)
+                    if not _stop.is_set():
+                        logger.warning(f"[ENGINE] Reconnecting in {delay:.0f}s: {e}")
+                        await asyncio.sleep(delay)
+                        delay = min(delay * 2, 30.0)
 
-        async def _on_markets(markets):
-            """Called every 30s with fresh list of active 5-min markets."""
-            btc_price = await _get_btc_price()
-            if btc_price is None:
-                return
+        # Polymarket orderbook poller — synthetic book in paper mode
+        async def _orderbook_poller() -> None:
+            while not _stop.is_set():
+                try:
+                    wd = engine._price_buffer.window_delta
+                    abs_wd = abs(wd)
+                    if abs_wd < 0.00005:
+                        yes_p = no_p = 0.50
+                    elif wd > 0:
+                        yes_p = min(0.92, 0.50 + abs_wd * 80)
+                        no_p = max(0.08, 1.0 - yes_p - 0.02)
+                    else:
+                        no_p = min(0.92, 0.50 + abs_wd * 80)
+                        yes_p = max(0.08, 1.0 - no_p - 0.02)
+                    spread = 0.018
+                    book = BookSnapshot(
+                        yes_bid=round(yes_p - spread / 2, 3),
+                        yes_ask=round(yes_p + spread / 2, 3),
+                        no_bid=round(no_p - spread / 2, 3),
+                        no_ask=round(no_p + spread / 2, 3),
+                        yes_bid_size=500.0,
+                        yes_ask_size=500.0,
+                        no_bid_size=500.0,
+                        no_ask_size=500.0,
+                    )
+                    await engine.update_orderbook(book)
+                except Exception as e:
+                    logger.debug(f"[ENGINE] Orderbook update error: {e}")
+                await asyncio.sleep(2)
 
-            strategy.update_btc_price(btc_price)
+        # Scanner discovers which Polymarket 5-min markets are active
+        os.makedirs("data", exist_ok=True)
+        db_engine = await init_db(settings.database_url)
+        db = MarketRepository(db_engine)
 
-            if not order_flow.is_ready():
-                logger.info("[5MIN] Waiting for order flow data (~90s on first start)")
-                return
-
-            risk_state = await risk_mgr.get_state()
-            if not risk_state.can_trade:
-                logger.warning("[5MIN] Trading halted by risk manager")
-                return
-
-            for market in markets:
-                signal = strategy.evaluate_market(market, candles_1m=[])
-                if signal is None:
-                    continue
-                can_exec, reason = await risk_mgr.can_execute(signal, None)
-                if not can_exec:
-                    logger.info(f"[5MIN] Signal blocked: {reason}")
-                    continue
-                trade = await paper_trader.place_order(signal, size_usdc=20.0)
-                logger.success(
-                    f"[5MIN] Trade opened | {signal.direction.value} | "
-                    f"conf={signal.confidence:.0f} | edge={signal.edge*100:.1f}% | "
-                    f"fair={signal.fair_value_estimate:.2f} vs mkt={signal.price:.2f}"
-                )
-
-        signal.signal(signal.SIGINT, lambda s, f: _stop.set())
-        signal.signal(signal.SIGTERM, lambda s, f: _stop.set())
-
-        # Import scanner (needs a Polymarket client — use stub in paper mode)
         class _StubClient:
             async def get_btc_markets(self):
                 return []
 
-        from src.core.database import init_db, MarketRepository
-        import os as _os
-        _os.makedirs("data", exist_ok=True)
-        db_engine = await init_db(settings.database_url)
-        db = MarketRepository(db_engine)
         scanner = MarketScanner(_StubClient(), settings, db)
 
-        await asyncio.gather(
-            order_flow.start(),
-            scanner.run_five_min_continuous(interval_seconds=30, callback=_on_markets),
-            _exit_monitor_loop(),
+        async def _on_markets(markets) -> None:
+            logger.info(f"[ENGINE] {len(markets)} active 5-min markets in scope")
+
+        logger.info(
+            "[ENGINE] All subsystems ready",
+            balance=settings.paper_balance,
+            paper=settings.paper_trading,
+            min_confidence=engine.MIN_CONFIDENCE,
+            entry_window=f"T-{engine.ENTRY_PREFERRED_START}s to T-{engine.ENTRY_PREFERRED_END}s",
         )
+
+        await engine.start()
+
+        tasks = [
+            asyncio.create_task(_binance_feed()),
+            asyncio.create_task(_orderbook_poller()),
+            asyncio.create_task(_write_status()),
+            asyncio.create_task(
+                scanner.run_five_min_continuous(30, _on_markets)
+            ),
+        ]
+
+        try:
+            await _stop.wait()
+        finally:
+            logger.info("[ENGINE] Shutting down")
+            await engine.stop()
+            await scanner.stop()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.info("[ENGINE] Stopped cleanly")
         return
 
     _orchestrator = BotOrchestrator(settings)
