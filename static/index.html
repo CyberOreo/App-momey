@@ -345,7 +345,22 @@
         <div class="eng-cell">
           <div class="eng-label">Trades Fired</div>
           <div class="eng-val neu" id="eng-trades">0</div>
-          <div style="font-size:11px;color:var(--muted)" id="eng-arb">arb: check sum_ask</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-arb">—</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">Oracle (Chainlink)</div>
+          <div class="eng-val neu" id="eng-oracle">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-oracle-age">settlement price</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">3-Exchange Vote</div>
+          <div class="eng-val neu" id="eng-consensus">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-consensus-sub">Binance+Coinbase+Bybit</div>
+        </div>
+        <div class="eng-cell">
+          <div class="eng-label">Funding Rate</div>
+          <div class="eng-val neu" id="eng-funding">—</div>
+          <div style="font-size:11px;color:var(--muted)" id="eng-funding-sub">futures pressure</div>
         </div>
       </div>
     </div>
@@ -619,6 +634,32 @@ function updateDashboard(d) {
     document.getElementById('eng-arb').textContent = sumAsk > 0
       ? 'YES+NO=' + sumAsk.toFixed(3) + (sumAsk < 0.985 ? ' ⚡ ARB!' : '')
       : '—';
+
+    // Oracle
+    const oracle = eng.oracle_confirms;
+    const oracleEl = document.getElementById('eng-oracle');
+    oracleEl.textContent = oracle || '—';
+    oracleEl.className = 'eng-val ' + (oracle === 'YES' ? 'pos' : oracle === 'NO' ? 'neg' : 'neu');
+    document.getElementById('eng-oracle-age').textContent =
+      eng.oracle_age_s < 60 ? `age ${Math.round(eng.oracle_age_s)}s` : 'stale';
+
+    // Consensus
+    const cons = eng.consensus || 'unknown';
+    const consEl = document.getElementById('eng-consensus');
+    consEl.textContent = cons.toUpperCase();
+    consEl.className = 'eng-val ' + (cons === 'up' ? 'pos' : cons === 'down' ? 'neg' : 'neu');
+    document.getElementById('eng-consensus-sub').textContent =
+      eng.consensus_boost > 0 ? `+${eng.consensus_boost} pts` :
+      eng.consensus_boost < 0 ? `${eng.consensus_boost} pts` : 'Binance+Coinbase+Bybit';
+
+    // Funding
+    const fund = eng.funding_signal || 0;
+    const fundEl = document.getElementById('eng-funding');
+    fundEl.textContent = (fund >= 0 ? '+' : '') + fund.toFixed(3);
+    fundEl.className = 'eng-val ' + (fund > 0.3 ? 'neg' : fund < -0.3 ? 'pos' : 'neu');
+    document.getElementById('eng-funding-sub').textContent =
+      fund > 0.3 ? 'longs squeezed (bearish)' :
+      fund < -0.3 ? 'shorts squeezed (bullish)' : 'neutral';
   } else {
     enginePanel.classList.remove('active');
   }

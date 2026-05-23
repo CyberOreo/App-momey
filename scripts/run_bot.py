@@ -358,14 +358,17 @@ async def _main(args: argparse.Namespace) -> None:
     )
 
     if args.five_min:
-        # ── 5-minute research engine mode (1-second decision loop) ────────────
-        logger.info("Starting in 5-MINUTE ENGINE mode — 1-second decision loop")
+        # ── 5-minute unified engine — all signals in one system ───────────────
+        logger.info("Starting 5-MIN UNIFIED ENGINE — 1-second loop + 6 signal sources")
         import json as _json
         import websockets as _ws
         from src.trading.five_min_engine import FiveMinEngine, BookSnapshot
         from src.trading.paper_trading import PaperTrader
         from src.market.scanner import MarketScanner
         from src.core.database import init_db, MarketRepository
+        from src.market.chainlink import ChainlinkOracle
+        from src.market.multi_exchange import MultiExchangeFeed
+        from src.market.funding_rate import FundingRateTracker
 
         _stop = asyncio.Event()
         signal.signal(signal.SIGINT, lambda s, f: _stop.set())
@@ -395,6 +398,40 @@ async def _main(args: argparse.Namespace) -> None:
             on_decision=lambda d: asyncio.create_task(_handle_decision(d)),
         )
 
+        # ── Chainlink oracle — Polygon RPC, polls every 5s ────────────────────
+        def _oracle_cb(oracle_price) -> None:
+            window_open = engine._price_buffer.window_open_price
+            if window_open > 0 and oracle_price.is_fresh:
+                confirms = "YES" if oracle_price.price > window_open else "NO"
+                engine.on_oracle(confirms, oracle_price.age_seconds)
+                logger.debug(
+                    f"[ORACLE] BTC/USD={oracle_price.price:,.2f} | "
+                    f"confirms={confirms} | age={oracle_price.age_seconds:.0f}s"
+                )
+            else:
+                engine.on_oracle(None, oracle_price.age_seconds)
+
+        oracle = ChainlinkOracle(poll_interval=5.0, on_update=_oracle_cb)
+
+        # ── Multi-exchange consensus — Binance + Coinbase + Bybit ────────────
+        def _consensus_cb(result) -> None:
+            engine.on_consensus_result(result.direction, result.signal_boost)
+            if result.exchange_count >= 2:
+                logger.debug(
+                    f"[MULTI] {result.direction} | "
+                    f"agreement={result.agreement:.0%} | "
+                    f"exchanges={result.exchange_count} | "
+                    f"boost={result.signal_boost:+.0f}"
+                )
+
+        multi_feed = MultiExchangeFeed(on_consensus=_consensus_cb)
+
+        # ── Funding rate — Binance perpetual futures ──────────────────────────
+        def _funding_cb(snap) -> None:
+            engine.on_funding_signal(snap.signal)
+
+        funding = FundingRateTracker(on_update=_funding_cb)
+
         # Write engine status to disk every 2 seconds for the web dashboard
         _status_path = _ROOT / "data" / "engine_status.json"
 
@@ -414,6 +451,8 @@ async def _main(args: argparse.Namespace) -> None:
                 await asyncio.sleep(2)
 
         # Binance combined stream: ticker price + aggTrades for VPIN
+        _last_window_ts = [0]
+
         async def _binance_feed() -> None:
             url = (
                 "wss://stream.binance.com:9443/stream"
@@ -434,6 +473,13 @@ async def _main(args: argparse.Namespace) -> None:
                                 stream = msg.get("stream", "")
                                 if "ticker" in stream:
                                     engine.on_price(float(data["c"]))
+                                    # Snapshot multi-exchange baseline at each new window
+                                    from src.trading.five_min_engine import current_window_open_ts
+                                    wts = current_window_open_ts()
+                                    if wts != _last_window_ts[0]:
+                                        _last_window_ts[0] = wts
+                                        multi_feed.set_window_baseline()
+                                        logger.debug("[ENGINE] New window — baseline set")
                                 elif "aggTrade" in stream:
                                     engine.on_trade(
                                         float(data["p"]),
@@ -500,9 +546,14 @@ async def _main(args: argparse.Namespace) -> None:
             paper=settings.paper_trading,
             min_confidence=engine.MIN_CONFIDENCE,
             entry_window=f"T-{engine.ENTRY_PREFERRED_START}s to T-{engine.ENTRY_PREFERRED_END}s",
+            signals="window_delta + VPIN + Chainlink oracle + 3-exchange consensus + funding rate",
         )
 
+        # Start all async components
         await engine.start()
+        await oracle.start()
+        await multi_feed.start()
+        await funding.start()
 
         tasks = [
             asyncio.create_task(_binance_feed()),
@@ -516,13 +567,16 @@ async def _main(args: argparse.Namespace) -> None:
         try:
             await _stop.wait()
         finally:
-            logger.info("[ENGINE] Shutting down")
+            logger.info("[ENGINE] Shutting down all subsystems")
             await engine.stop()
+            await oracle.stop()
+            await multi_feed.stop()
+            await funding.stop()
             await scanner.stop()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info("[ENGINE] Stopped cleanly")
+            logger.info("[ENGINE] All subsystems stopped cleanly")
         return
 
     _orchestrator = BotOrchestrator(settings)

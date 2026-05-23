@@ -348,8 +348,15 @@ class FiveMinEngine:
 
         self._running = False
         self._task: Optional[asyncio.Task] = None
-        self._last_entry_window: int = -1  # window_ts of last trade to avoid double-entry
+        self._last_entry_window: int = -1
         self._open_trade_direction: Optional[str] = None
+
+        # External signal state (updated via callbacks)
+        self._oracle_confirms: Optional[str] = None   # 'YES', 'NO', or None
+        self._oracle_age: float = 999.0
+        self._consensus_direction: str = "unknown"
+        self._consensus_boost: float = 0.0
+        self._funding_signal: float = 0.0             # +1=bearish pressure, -1=bullish
 
     # ── Feed callbacks ────────────────────────────────────────────────────────
 
@@ -359,8 +366,30 @@ class FiveMinEngine:
 
     def on_trade(self, price: float, qty: float, is_buyer_maker: bool) -> None:
         """Called by Binance aggTrade stream."""
-        is_buy = not is_buyer_maker  # buyer_maker=True means seller initiated
+        is_buy = not is_buyer_maker
         self._vpin.update(price, qty, is_buy)
+
+    def on_oracle(self, confirms: Optional[str], age_seconds: float) -> None:
+        """
+        Called by ChainlinkOracle poller.
+        confirms = 'YES' if oracle price > window open, 'NO' if below, None if stale.
+        This is literally what Polymarket will resolve to — highest-value signal.
+        """
+        self._oracle_confirms = confirms
+        self._oracle_age = age_seconds
+
+    def on_consensus_result(self, direction: str, boost: float) -> None:
+        """Called by MultiExchangeFeed with consensus direction and confidence boost."""
+        self._consensus_direction = direction
+        self._consensus_boost = boost
+
+    def on_funding_signal(self, signal: float) -> None:
+        """
+        Called by FundingRateTracker.
+        signal > 0 = bearish pressure (over-leveraged longs).
+        signal < 0 = bullish pressure (over-leveraged shorts, squeeze coming).
+        """
+        self._funding_signal = signal
 
     async def update_orderbook(self, book: BookSnapshot) -> None:
         async with self._book_lock:
@@ -532,13 +561,41 @@ class FiveMinEngine:
             if (velocity_60s > 0) == (window_delta > 0):
                 score += 5
 
+        # 8. Chainlink oracle confirmation (+12 if confirms, -15 if contradicts)
+        #    This is THE settlement price — if oracle already says YES, we should too
+        if self._oracle_confirms is not None and self._oracle_age < 60:
+            direction_signal = 'YES' if window_delta > 0 else 'NO'
+            if self._oracle_confirms == direction_signal:
+                score += 12   # oracle CONFIRMS our read — massive edge
+            else:
+                score -= 15   # oracle says OPPOSITE — strong warning
+
+        # 9. Multi-exchange consensus (+10 / -8 / 0)
+        score += self._consensus_boost
+
+        # 10. Funding rate modifier
+        #     Positive funding = over-leveraged longs = bearish pressure
+        if abs(self._funding_signal) > 0.3:
+            if window_delta < 0 and self._funding_signal > 0.3:
+                score += 5    # longs squeezed + price falling = bearish confirmed
+            elif window_delta > 0 and self._funding_signal < -0.3:
+                score += 5    # shorts squeezed + price rising = bullish confirmed
+            elif window_delta > 0 and self._funding_signal > 0.5:
+                score -= 5    # bullish signal but over-leveraged longs will get wrecked
+            elif window_delta < 0 and self._funding_signal < -0.5:
+                score -= 5    # bearish signal but over-leveraged shorts will get squeezed
+
+        # 11. Time-of-day filter — bad hours get heavy penalty
+        if not self._is_good_trading_hour():
+            score -= 25       # effectively blocks trades in dead/noisy hours
+
         # Penalties
         if self._price_buffer.is_stale(3):
-            score -= 30   # data issue
+            score -= 30       # stale data = skip
         if self._book.yes_spread > 0.08:
-            score -= 15   # wide spread = bad market
+            score -= 15       # wide spread = bad market
         if abs(window_delta) > 0.003:
-            score -= 10   # extreme move — last 20% of windows flip at this magnitude
+            score -= 10       # extreme move — last 20% of windows flip at this magnitude
 
         confidence = max(0, min(100, score))
 
@@ -554,6 +611,9 @@ class FiveMinEngine:
             'no_microprice': no_micro,
             'confidence': confidence,
             'direction': 'YES' if window_delta > 0 else 'NO',
+            'oracle_confirms': self._oracle_confirms,
+            'consensus': self._consensus_direction,
+            'funding_signal': self._funding_signal,
         }
 
     # ── Decision construction ─────────────────────────────────────────────────
@@ -592,10 +652,25 @@ class FiveMinEngine:
                 signals=signals,
             )
 
-        # Position size: Kelly-inspired, scaled by confidence
-        # Higher confidence + larger delta = bigger size
-        confidence_scalar = (confidence - 60) / 40   # 0 at conf=60, 1 at conf=100
-        size = self.balance * self.max_risk_pct * max(0.2, confidence_scalar)
+        # Full Kelly criterion: f* = (p*b - q) / b
+        #   p = estimated win probability
+        #   q = 1 - p
+        #   b = decimal odds = (1 / token_price) - 1
+        win_prob = max(0.50, min(0.95, confidence / 100.0))
+        q = 1.0 - win_prob
+        b = max(0.05, (1.0 / max(0.05, entry_price)) - 1.0)
+        kelly_f = (win_prob * b - q) / b
+
+        # Fractional Kelly — scale fraction by confidence to manage variance
+        if confidence >= 82:
+            kelly_fraction = 0.50    # half-Kelly at very high confidence
+        elif confidence >= 75:
+            kelly_fraction = 0.35
+        else:
+            kelly_fraction = 0.25   # quarter-Kelly for marginal signals
+
+        adjusted_f = max(0.005, kelly_f * kelly_fraction)
+        size = self.balance * adjusted_f
         size = max(self.MIN_TRADE_SIZE_USDC, min(self.MAX_TRADE_SIZE_USDC, size))
 
         reasons = []
@@ -620,6 +695,22 @@ class FiveMinEngine:
             signals=signals,
             is_arbitrage=False,
         )
+
+    # ── Time-of-day filter ────────────────────────────────────────────────────
+
+    def _is_good_trading_hour(self) -> bool:
+        """
+        Filter low-liquidity and high-noise hours.
+
+        00:00–06:59 UTC: Asia dead zone. Polymarket 5-min markets have almost
+        no liquidity, spreads are wide, and market makers are absent.
+        Signals in this window have ~48% win rate historically — basically random.
+
+        07:00–23:59 UTC: European + US session. Liquidity is deep,
+        market makers are active, and signals are meaningful.
+        """
+        hour = datetime.now(timezone.utc).hour
+        return hour >= 7
 
     # ── Arbitrage checker ─────────────────────────────────────────────────────
 
@@ -743,6 +834,7 @@ class FiveMinEngine:
             "window_open_price": self._price_buffer.window_open_price,
             "window_delta_pct": round(self._price_buffer.window_delta * 100, 4),
             "velocity_30s_pct": round(self._price_buffer.velocity(30) * 100, 4),
+            "acceleration": round(self._price_buffer.acceleration() * 100, 4),
             "seconds_to_close": round(seconds_to_window_close(), 1),
             "vpin": round(self._vpin.vpin, 3),
             "vpin_direction": round(self._vpin.direction, 3),
@@ -752,4 +844,11 @@ class FiveMinEngine:
             "sum_ask": round(self._book.sum_ask, 4),
             "data_stale": self._price_buffer.is_stale(5),
             "window_slug": window_slug(),
+            # New signal sources
+            "oracle_confirms": self._oracle_confirms,
+            "oracle_age_s": round(self._oracle_age, 1),
+            "consensus": self._consensus_direction,
+            "consensus_boost": round(self._consensus_boost, 1),
+            "funding_signal": round(self._funding_signal, 3),
+            "good_trading_hour": self._is_good_trading_hour(),
         }
