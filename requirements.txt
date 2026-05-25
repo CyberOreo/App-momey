@@ -1,0 +1,6 @@
+# Core — required to run the bot (all pre-built wheels, no compiler needed)
+-r requirements_core.txt
+
+# Live trading only — signs on-chain orders
+# Uncomment when PAPER_TRADING=false
+# eth-account>=0.10.0
