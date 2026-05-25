@@ -379,6 +379,7 @@ async def _main(args: argparse.Namespace) -> None:
         from src.market.multi_exchange import MultiExchangeFeed
         from src.market.funding_rate import FundingRateTracker
         from src.connectors.polymarket import PolymarketClient
+        from src.market.btc5min import BTC5MinFeed, MarketSnap
 
         _stop = asyncio.Event()
         signal.signal(signal.SIGINT, lambda s, f: _stop.set())
@@ -518,41 +519,9 @@ async def _main(args: argparse.Namespace) -> None:
 
         funding = FundingRateTracker(on_update=_funding_cb)
 
-        # Write engine status to disk every 0.5s for the web dashboard
+        # Status path and paper trade auto-close state
         _status_path = _ROOT / "data" / "engine_status.json"
         _last_close_window = [0]
-
-        async def _write_status() -> None:
-            os.makedirs(str(_ROOT / "data"), exist_ok=True)
-            while not _stop.is_set():
-                try:
-                    # Auto-close open paper trade when window rolls over
-                    if settings.paper_trading and paper.open:
-                        wts = current_window_open_ts()
-                        prev_wts = _last_close_window[0]
-                        if prev_wts and wts != prev_wts:
-                            # Determine outcome from window delta
-                            wd = engine._price_buffer.window_delta
-                            direction = paper.open.get("direction", "YES")
-                            if direction == "YES":
-                                won = wd > 0
-                            else:
-                                won = wd < 0
-                            exit_p = 1.0 if won else 0.0
-                            paper.close(exit_p, "win" if won else "loss")
-                        _last_close_window[0] = wts
-
-                    st = engine.status()
-                    st.update({
-                        "mode": "five_min_engine",
-                        "paper": settings.paper_trading,
-                        "trades": _trade_count[0],
-                        "paper_stats": paper.stats() if settings.paper_trading else None,
-                    })
-                    _status_path.write_text(_json.dumps(st), encoding="utf-8")
-                except Exception:
-                    pass
-                await asyncio.sleep(0.5)
 
         # Binance combined stream: ticker price + aggTrades for VPIN
         _last_window_ts = [0]
@@ -600,57 +569,46 @@ async def _main(args: argparse.Namespace) -> None:
                         await asyncio.sleep(delay)
                         delay = min(delay * 2, 30.0)
 
-        # Polymarket orderbook poller — synthetic book in paper mode
-        async def _orderbook_poller() -> None:
-            while not _stop.is_set():
-                try:
-                    wd = engine._price_buffer.window_delta
-                    abs_wd = abs(wd)
-                    if abs_wd < 0.00005:
-                        yes_p = no_p = 0.50
-                    elif wd > 0:
-                        yes_p = min(0.92, 0.50 + abs_wd * 80)
-                        no_p = max(0.08, 1.0 - yes_p - 0.02)
-                    else:
-                        no_p = min(0.92, 0.50 + abs_wd * 80)
-                        yes_p = max(0.08, 1.0 - no_p - 0.02)
-                    spread = 0.018
-                    book = BookSnapshot(
-                        yes_bid=round(yes_p - spread / 2, 3),
-                        yes_ask=round(yes_p + spread / 2, 3),
-                        no_bid=round(no_p - spread / 2, 3),
-                        no_ask=round(no_p + spread / 2, 3),
-                        yes_bid_size=500.0,
-                        yes_ask_size=500.0,
-                        no_bid_size=500.0,
-                        no_ask_size=500.0,
-                    )
-                    await engine.update_orderbook(book)
-                except Exception as e:
-                    logger.debug(f"[ENGINE] Orderbook update error: {e}")
-                await asyncio.sleep(2)
+        # ── Live Polymarket feed — real YES/NO prices every 1 second ────────────
+        _current_market: dict = {}
 
-        # Scanner discovers which Polymarket 5-min markets are active
+        def _on_market_snap(snap: MarketSnap) -> None:
+            """Called every 1s with live bid/ask from Polymarket CLOB."""
+            nonlocal _current_market
+            # Feed real prices into the engine
+            book = BookSnapshot(
+                yes_bid=snap.yes_bid,
+                yes_ask=snap.yes_ask,
+                no_bid=snap.no_bid,
+                no_ask=snap.no_ask,
+                yes_bid_size=1000.0,
+                yes_ask_size=1000.0,
+                no_bid_size=1000.0,
+                no_ask_size=1000.0,
+            )
+            asyncio.create_task(engine.update_orderbook(book))
+
+            _current_market = {
+                "slug": snap.slug,
+                "question": snap.question,
+                "yes_bid": round(snap.yes_bid, 4),
+                "yes_ask": round(snap.yes_ask, 4),
+                "no_bid": round(snap.no_bid, 4),
+                "no_ask": round(snap.no_ask, 4),
+                "yes_mid": round(snap.yes_mid, 4),
+                "no_mid": round(snap.no_mid, 4),
+                "sum_ask": round(snap.sum_ask, 4),
+                "seconds_to_close": round(snap.seconds_to_close, 1),
+                "spread_pct": round(snap.spread_pct, 4),
+            }
+            # Mirror active markets for the dashboard markets panel
+            engine._active_markets = [_current_market] if _current_market else []
+
+        poly_feed = BTC5MinFeed(on_update=_on_market_snap)
+
         os.makedirs("data", exist_ok=True)
         db_engine = await init_db(settings.database_url)
         db = MarketRepository(db_engine)
-        poly_client = PolymarketClient(settings)
-        scanner = MarketScanner(poly_client, settings, db)
-
-        async def _on_markets(markets) -> None:
-            logger.info(f"[ENGINE] {len(markets)} active 5-min markets in scope")
-            # Store market summaries in engine for dashboard display
-            engine._active_markets = [
-                {
-                    "question": (m.question or "")[:60],
-                    "yes_price": round(m.yes_token.price if m.yes_token else 0, 3),
-                    "no_price": round(m.no_token.price if m.no_token else 0, 3),
-                    "liquidity": round(getattr(m, "liquidity", 0) or 0, 0),
-                    "volume": round(getattr(m, "volume", 0) or 0, 0),
-                    "seconds_left": max(0, round((m.end_date - __import__("datetime").datetime.utcnow()).total_seconds())) if m.end_date else 0,
-                }
-                for m in (markets or [])
-            ][:5]
 
         logger.info(
             "[ENGINE] All subsystems ready",
@@ -658,7 +616,7 @@ async def _main(args: argparse.Namespace) -> None:
             paper=settings.paper_trading,
             min_confidence=engine.MIN_CONFIDENCE,
             entry_window=f"T-{engine.ENTRY_PREFERRED_START}s to T-{engine.ENTRY_PREFERRED_END}s",
-            signals="window_delta + VPIN + Chainlink oracle + 3-exchange consensus + funding rate",
+            feed="BTC5MinFeed → real Polymarket prices every 1s",
         )
 
         # Start all async components
@@ -666,14 +624,43 @@ async def _main(args: argparse.Namespace) -> None:
         await oracle.start()
         await multi_feed.start()
         await funding.start()
+        await poly_feed.start()
+
+        # Update status to include live market data
+        _orig_write = _write_status
+
+        async def _write_status_enhanced() -> None:
+            os.makedirs(str(_ROOT / "data"), exist_ok=True)
+            while not _stop.is_set():
+                try:
+                    wts = current_window_open_ts()
+                    prev_wts = _last_close_window[0]
+
+                    # Auto-close paper trade when window rolls over
+                    if settings.paper_trading and paper.open:
+                        if prev_wts and wts != prev_wts:
+                            wd = engine._price_buffer.window_delta
+                            direction = paper.open.get("direction", "YES")
+                            won = (wd > 0) if direction == "YES" else (wd < 0)
+                            paper.close(1.0 if won else 0.0, "win" if won else "loss")
+                    _last_close_window[0] = wts
+
+                    st = engine.status()
+                    st.update({
+                        "mode": "five_min_engine",
+                        "paper": settings.paper_trading,
+                        "trades": _trade_count[0],
+                        "paper_stats": paper.stats() if settings.paper_trading else None,
+                        "current_market": _current_market,
+                    })
+                    _status_path.write_text(_json.dumps(st), encoding="utf-8")
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
 
         tasks = [
             asyncio.create_task(_binance_feed()),
-            asyncio.create_task(_orderbook_poller()),
-            asyncio.create_task(_write_status()),
-            asyncio.create_task(
-                scanner.run_five_min_continuous(30, _on_markets)
-            ),
+            asyncio.create_task(_write_status_enhanced()),
         ]
 
         try:
@@ -684,7 +671,7 @@ async def _main(args: argparse.Namespace) -> None:
             await oracle.stop()
             await multi_feed.stop()
             await funding.stop()
-            await scanner.stop()
+            await poly_feed.stop()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

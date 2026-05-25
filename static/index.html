@@ -224,6 +224,18 @@
     display: flex; align-items: center; gap: 10px;
   }
 
+  /* ── Paper balance bar ── */
+  .paper-bar {
+    background: linear-gradient(90deg, rgba(108,99,255,0.15), rgba(0,212,255,0.10));
+    border: 1px solid var(--accent); border-radius: var(--radius);
+    padding: 10px 20px; margin-bottom: 16px;
+    display: none; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  .paper-bar.active { display: flex; }
+  .paper-item { text-align: center; }
+  .paper-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .paper-val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+
   /* ── Bot activity panel ── */
   .activity-panel {
     background: var(--card); border: 1px solid var(--border);
@@ -393,6 +405,34 @@
       ⚠️  <strong>PAPER TRADING MODE</strong> — No real money is at risk. Toggle Live in Settings to trade with real funds.
     </div>
 
+    <!-- Paper trading live balance bar -->
+    <div class="paper-bar" id="paper-bar">
+      <div class="paper-item">
+        <div class="paper-label">💰 Paper Balance</div>
+        <div class="paper-val neu" id="pb-balance">$—</div>
+      </div>
+      <div class="paper-item">
+        <div class="paper-label">Total P&L</div>
+        <div class="paper-val neu" id="pb-pnl">$0.00</div>
+      </div>
+      <div class="paper-item">
+        <div class="paper-label">Daily P&L</div>
+        <div class="paper-val neu" id="pb-daily">$0.00</div>
+      </div>
+      <div class="paper-item">
+        <div class="paper-label">Win Rate</div>
+        <div class="paper-val neu" id="pb-wr">—</div>
+      </div>
+      <div class="paper-item">
+        <div class="paper-label">Trades</div>
+        <div class="paper-val neu" id="pb-trades">0</div>
+      </div>
+      <div class="paper-item" id="pb-open-wrap" style="display:none">
+        <div class="paper-label">Open Trade</div>
+        <div class="paper-val pos" id="pb-open">—</div>
+      </div>
+    </div>
+
     <!-- iPhone network hint (shown only on small screens) -->
     <div class="iphone-banner" id="iphone-banner">
       📱 <span>iPhone access: open Safari → <strong id="iphone-url">http://…:8080</strong></span>
@@ -503,20 +543,15 @@
       <div class="signal-row" id="signal-chips"></div>
     </div>
 
-    <!-- Active Polymarket markets being watched -->
+    <!-- Live Polymarket market — real prices every 1 second -->
     <div class="markets-panel" id="markets-panel" style="display:none">
       <div class="markets-title">
-        <span>📊 Polymarket — aktivni 5-min BTC trgi</span>
-        <span style="font-size:11px;color:var(--muted)" id="markets-count">0 najdenih</span>
+        <span>📊 Polymarket — LIVE market</span>
+        <span style="font-size:11px;color:var(--muted)" id="markets-count">čakam...</span>
       </div>
-      <div class="market-row" style="font-size:10px;color:var(--muted);font-weight:700">
-        <div>VPRAŠANJE</div>
-        <div class="market-col">YES cena</div>
-        <div class="market-col">NO cena</div>
-        <div class="market-col">Likvidnost</div>
-        <div class="market-col">Čas do konca</div>
+      <div id="live-market-card" style="padding:4px 0">
+        <div class="no-markets">Čakam na BTC5MinFeed...</div>
       </div>
-      <div id="markets-body"><div class="no-markets">Čakam na scanner...</div></div>
     </div>
 
     <!-- P&L chart + open positions -->
@@ -880,6 +915,32 @@ function updateDashboard(d) {
     document.getElementById('btc-price').textContent = '$' + Math.round(livePrice).toLocaleString('en-US');
   }
 
+  // ── Paper balance bar ─────────────────────────────────────────────────────
+  const ps2 = eng.paper_stats;
+  const paperBar = document.getElementById('paper-bar');
+  if (ps2 && eng.mode === 'five_min_engine' && d.running) {
+    paperBar.classList.add('active');
+    const bal = ps2.balance || 0;
+    const pnl = ps2.total_pnl || 0;
+    const daily = ps2.daily_pnl || 0;
+    document.getElementById('pb-balance').textContent = '$' + bal.toFixed(2);
+    document.getElementById('pb-balance').className = 'paper-val ' + (bal > ps2.initial ? 'pos' : bal < ps2.initial ? 'neg' : 'neu');
+    document.getElementById('pb-pnl').textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(2);
+    document.getElementById('pb-pnl').className = 'paper-val ' + (pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu');
+    document.getElementById('pb-daily').textContent = (daily >= 0 ? '+' : '') + '$' + daily.toFixed(2);
+    document.getElementById('pb-daily').className = 'paper-val ' + (daily > 0 ? 'pos' : daily < 0 ? 'neg' : 'neu');
+    document.getElementById('pb-wr').textContent = ps2.total_trades > 0 ? ps2.win_rate + '%' : '—';
+    document.getElementById('pb-trades').textContent = (ps2.wins||0) + 'W / ' + (ps2.losses||0) + 'L';
+    if (ps2.open) {
+      document.getElementById('pb-open-wrap').style.display = 'block';
+      document.getElementById('pb-open').textContent = ps2.open.direction + ' @ ' + (ps2.open.entry_price||0).toFixed(3);
+    } else {
+      document.getElementById('pb-open-wrap').style.display = 'none';
+    }
+  } else {
+    paperBar.classList.remove('active');
+  }
+
   // ── Activity panel (what is the bot doing RIGHT NOW) ──────────────────────
   const actPanel = document.getElementById('activity-panel');
   const actReason = document.getElementById('activity-reason');
@@ -921,30 +982,48 @@ function updateDashboard(d) {
     sigChips.innerHTML = '';
   }
 
-  // ── Markets panel ─────────────────────────────────────────────────────────
-  const markets = eng.active_markets || [];
+  // ── Live Polymarket market card ───────────────────────────────────────────
+  const cm = eng.current_market || {};
   const mkPanel = document.getElementById('markets-panel');
-  const mkBody = document.getElementById('markets-body');
+  const mkCard = document.getElementById('live-market-card');
   const mkCount = document.getElementById('markets-count');
   if (eng.mode === 'five_min_engine' && d.running) {
     mkPanel.style.display = 'block';
-    mkCount.textContent = markets.length + ' najdenih';
-    if (!markets.length) {
-      mkBody.innerHTML = '<div class="no-markets">Scanner aktiven — čakam na 5-min BTC trge na Polymarketu...</div>';
-    } else {
-      mkBody.innerHTML = markets.map(m => {
-        const secs = m.seconds_left || 0;
-        const timeStr = secs > 60 ? Math.floor(secs/60) + 'm ' + (secs%60) + 's' : secs + 's';
-        const yesCol = m.yes_price > 0.6 ? 'pos' : m.yes_price < 0.4 ? 'neg' : 'neu';
-        const noCol  = m.no_price  > 0.6 ? 'pos' : m.no_price  < 0.4 ? 'neg' : 'neu';
-        return `<div class="market-row">
-          <div class="market-q">${m.question}</div>
-          <div class="market-col ${yesCol}">${m.yes_price.toFixed(3)}</div>
-          <div class="market-col ${noCol}">${m.no_price.toFixed(3)}</div>
-          <div class="market-col">$${(m.liquidity||0).toLocaleString()}</div>
-          <div class="market-col">${timeStr}</div>
+    if (cm.slug) {
+      const secs = cm.seconds_to_close || 0;
+      const timeStr = secs > 60 ? Math.floor(secs/60) + 'm ' + Math.floor(secs%60) + 's' : Math.floor(secs) + 's';
+      const yesC = (cm.yes_ask||0) > 0.6 ? 'pos' : (cm.yes_ask||0) < 0.4 ? 'neg' : 'neu';
+      const noC  = (cm.no_ask||0)  > 0.6 ? 'pos' : (cm.no_ask||0)  < 0.4 ? 'neg' : 'neu';
+      const arb  = (cm.sum_ask||1) < 0.985;
+      mkCount.textContent = '⏱ ' + timeStr + ' | ' + cm.slug;
+      mkCard.innerHTML = `
+        <div style="font-size:13px;color:var(--text);margin-bottom:10px;font-weight:600">${cm.question||cm.slug}</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;text-align:center">
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase">YES bid</div>
+            <div style="font-size:20px;font-weight:700;color:var(--green)">${(cm.yes_bid||0).toFixed(3)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase">YES ask</div>
+            <div class="eng-val ${yesC}" style="font-size:20px">${(cm.yes_ask||0).toFixed(3)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase">NO bid</div>
+            <div style="font-size:20px;font-weight:700;color:var(--green)">${(cm.no_bid||0).toFixed(3)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);text-transform:uppercase">NO ask</div>
+            <div class="eng-val ${noC}" style="font-size:20px">${(cm.no_ask||0).toFixed(3)}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:12px;color:var(--muted);display:flex;gap:16px">
+          <span>YES+NO = <strong style="color:${arb?'var(--green)':'var(--text)'}">${(cm.sum_ask||0).toFixed(4)}</strong>${arb?' ⚡ ARB!':''}</span>
+          <span>Spread = ${((cm.spread_pct||0)*100).toFixed(2)}%</span>
+          <span>T-${timeStr}</span>
         </div>`;
-      }).join('');
+    } else {
+      mkCard.innerHTML = '<div class="no-markets">BTC5MinFeed čaka na naslednjo 5-min okno...</div>';
+      mkCount.textContent = 'čakam...';
     }
   } else {
     mkPanel.style.display = 'none';
