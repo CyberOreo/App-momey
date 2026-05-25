@@ -258,12 +258,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             data = self._read_body()
             live = data.get("live", False)
-            five_min = data.get("five_min", False)
             args = [sys.executable, str(ROOT / "scripts" / "run_bot.py")]
             if live:
                 args.append("--live")
-            if five_min:
-                args.append("--five-min")
             with _log_lock:
                 _log_lines.clear()
             try:
