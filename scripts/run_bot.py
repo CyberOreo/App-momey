@@ -371,22 +371,97 @@ async def _main(args: argparse.Namespace) -> None:
         logger.info("Starting 5-MIN UNIFIED ENGINE — 1-second loop + 6 signal sources")
         import json as _json
         import websockets as _ws
-        from src.trading.five_min_engine import FiveMinEngine, BookSnapshot
-        from src.trading.paper_trading import PaperTrader
+        from datetime import datetime as _dt
+        from src.trading.five_min_engine import FiveMinEngine, BookSnapshot, current_window_open_ts
         from src.market.scanner import MarketScanner
         from src.core.database import init_db, MarketRepository
         from src.market.chainlink import ChainlinkOracle
         from src.market.multi_exchange import MultiExchangeFeed
         from src.market.funding_rate import FundingRateTracker
+        from src.connectors.polymarket import PolymarketClient
 
         _stop = asyncio.Event()
         signal.signal(signal.SIGINT, lambda s, f: _stop.set())
         signal.signal(signal.SIGTERM, lambda s, f: _stop.set())
 
-        paper_trader = PaperTrader(
-            initial_balance=settings.paper_balance,
-            settings=settings,
-        )
+        # ── Simple in-memory paper trader for 5-min engine ────────────────────
+        class _Paper:
+            def __init__(self, bal):
+                self.initial = bal
+                self.balance = bal
+                self.open: dict = {}
+                self.closed: list = []
+                self.wins = self.losses = 0
+
+            def enter(self, decision):
+                if self.open:
+                    return
+                cost = decision.size_usdc
+                fee = cost * 0.001
+                if cost + fee > self.balance:
+                    return
+                self.balance -= (cost + fee)
+                self.open = {
+                    "direction": decision.direction,
+                    "entry_price": decision.entry_price,
+                    "size_usdc": cost,
+                    "tokens": cost / max(decision.entry_price, 0.01),
+                    "entry_time": _dt.utcnow().isoformat(),
+                    "confidence": decision.confidence,
+                    "window_delta": decision.window_delta,
+                }
+                logger.success(
+                    f"[PAPER] ENTER {decision.direction} | "
+                    f"size=${cost:.0f} | price={decision.entry_price:.3f} | "
+                    f"balance=${self.balance:.2f}"
+                )
+
+            def close(self, exit_price: float, result: str):
+                if not self.open:
+                    return
+                t = self.open.copy()
+                exit_val = t["tokens"] * exit_price
+                fee = exit_val * 0.001
+                pnl = exit_val - t["size_usdc"] - fee
+                self.balance += t["size_usdc"] + pnl
+                t.update({
+                    "exit_price": exit_price, "pnl": round(pnl, 4),
+                    "outcome": result, "exit_time": _dt.utcnow().isoformat(),
+                })
+                self.closed.append(t)
+                if result == "win":
+                    self.wins += 1
+                else:
+                    self.losses += 1
+                self.open = {}
+                logger.success(
+                    f"[PAPER] CLOSE {t['direction']} | "
+                    f"pnl=${pnl:+.2f} | {result.upper()} | "
+                    f"balance=${self.balance:.2f}"
+                )
+
+            def stats(self):
+                closed = self.closed
+                total = len(closed)
+                pnl = sum(t["pnl"] for t in closed)
+                wr = round(self.wins / total * 100, 1) if total else 0.0
+                today = _dt.utcnow().date().isoformat()
+                today_t = [t for t in closed if (t.get("exit_time") or "")[:10] == today]
+                daily_pnl = sum(t["pnl"] for t in today_t)
+                return {
+                    "balance": round(self.balance, 2),
+                    "initial": self.initial,
+                    "total_pnl": round(pnl, 2),
+                    "daily_pnl": round(daily_pnl, 2),
+                    "total_trades": total,
+                    "wins": self.wins,
+                    "losses": self.losses,
+                    "win_rate": wr,
+                    "open": self.open or None,
+                    "recent": closed[-5:][::-1],
+                }
+
+        paper = _Paper(settings.paper_balance)
         _trade_count = [0]
 
         async def _handle_decision(decision) -> None:
@@ -400,6 +475,8 @@ async def _main(args: argparse.Namespace) -> None:
             )
             for r in decision.reasons:
                 logger.debug(f"  → {r}")
+            if settings.paper_trading:
+                paper.enter(decision)
 
         engine = FiveMinEngine(
             balance=settings.paper_balance,
@@ -441,23 +518,41 @@ async def _main(args: argparse.Namespace) -> None:
 
         funding = FundingRateTracker(on_update=_funding_cb)
 
-        # Write engine status to disk every 2 seconds for the web dashboard
+        # Write engine status to disk every 0.5s for the web dashboard
         _status_path = _ROOT / "data" / "engine_status.json"
+        _last_close_window = [0]
 
         async def _write_status() -> None:
             os.makedirs(str(_ROOT / "data"), exist_ok=True)
             while not _stop.is_set():
                 try:
+                    # Auto-close open paper trade when window rolls over
+                    if settings.paper_trading and paper.open:
+                        wts = current_window_open_ts()
+                        prev_wts = _last_close_window[0]
+                        if prev_wts and wts != prev_wts:
+                            # Determine outcome from window delta
+                            wd = engine._price_buffer.window_delta
+                            direction = paper.open.get("direction", "YES")
+                            if direction == "YES":
+                                won = wd > 0
+                            else:
+                                won = wd < 0
+                            exit_p = 1.0 if won else 0.0
+                            paper.close(exit_p, "win" if won else "loss")
+                        _last_close_window[0] = wts
+
                     st = engine.status()
                     st.update({
                         "mode": "five_min_engine",
                         "paper": settings.paper_trading,
                         "trades": _trade_count[0],
+                        "paper_stats": paper.stats() if settings.paper_trading else None,
                     })
                     _status_path.write_text(_json.dumps(st), encoding="utf-8")
                 except Exception:
                     pass
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)
 
         # Binance combined stream: ticker price + aggTrades for VPIN
         _last_window_ts = [0]
@@ -539,12 +634,8 @@ async def _main(args: argparse.Namespace) -> None:
         os.makedirs("data", exist_ok=True)
         db_engine = await init_db(settings.database_url)
         db = MarketRepository(db_engine)
-
-        class _StubClient:
-            async def get_btc_markets(self):
-                return []
-
-        scanner = MarketScanner(_StubClient(), settings, db)
+        poly_client = PolymarketClient(settings)
+        scanner = MarketScanner(poly_client, settings, db)
 
         async def _on_markets(markets) -> None:
             logger.info(f"[ENGINE] {len(markets)} active 5-min markets in scope")

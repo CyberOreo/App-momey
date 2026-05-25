@@ -840,22 +840,31 @@ function updateDashboard(d) {
   document.getElementById('mode-text').textContent = d.paper_trading ? 'PAPER' : 'LIVE';
   document.getElementById('mode-text').style.color = d.paper_trading ? 'var(--green)' : 'var(--red)';
 
-  // Cards
-  const dpnl = d.daily_pnl || 0;
-  const tpnl = d.total_pnl || 0;
+  // Cards — use paper_stats from engine when 5-min engine is running
+  const ps = eng.paper_stats;
+  const dpnl = ps ? ps.daily_pnl : (d.daily_pnl || 0);
+  const tpnl = ps ? ps.total_pnl : (d.total_pnl || 0);
+  const totalTrades = ps ? ps.total_trades : (d.total_trades || 0);
+  const winRate = ps ? ps.win_rate : d.win_rate;
+  const wins = ps ? ps.wins : (d.wins_today || 0);
+  const losses = ps ? ps.losses : (d.losses_today || 0);
+  const openPos = ps && ps.open ? 1 : (d.open_positions || 0);
+  const balance = ps ? ps.balance : null;
+
   const el_dpnl = document.getElementById('card-daily-pnl');
-  el_dpnl.textContent = (dpnl >= 0 ? '+' : '') + '$' + dpnl.toFixed(2);
+  el_dpnl.textContent = (dpnl >= 0 ? '+' : '') + '$' + (dpnl||0).toFixed(2);
   el_dpnl.className = 'card-value ' + (dpnl > 0 ? 'pos' : dpnl < 0 ? 'neg' : 'neu');
 
   const el_tpnl = document.getElementById('card-total-pnl');
-  el_tpnl.textContent = (tpnl >= 0 ? '+' : '') + '$' + tpnl.toFixed(2);
+  el_tpnl.textContent = (tpnl >= 0 ? '+' : '') + '$' + (tpnl||0).toFixed(2);
   el_tpnl.className = 'card-value ' + (tpnl > 0 ? 'pos' : tpnl < 0 ? 'neg' : 'neu');
 
-  document.getElementById('card-trades-today').textContent = (d.trades_today || 0) + ' trades today';
-  document.getElementById('card-total-trades').textContent = (d.total_trades || 0) + ' total trades';
-  document.getElementById('card-win-rate').textContent = d.win_rate ? d.win_rate + '%' : '—';
-  document.getElementById('card-wl').textContent = (d.wins_today || 0) + 'W / ' + (d.losses_today || 0) + 'L today';
-  document.getElementById('card-positions').textContent = d.open_positions || 0;
+  document.getElementById('card-trades-today').textContent =
+    balance ? `balance: $${balance.toFixed(2)}` : ((d.trades_today||0) + ' trades today');
+  document.getElementById('card-total-trades').textContent = totalTrades + ' total trades';
+  document.getElementById('card-win-rate').textContent = winRate ? winRate + '%' : '—';
+  document.getElementById('card-wl').textContent = wins + 'W / ' + losses + 'L';
+  document.getElementById('card-positions').textContent = openPos;
 
   // Last update
   document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
@@ -865,9 +874,10 @@ function updateDashboard(d) {
     document.getElementById('iphone-url').textContent = 'http://' + d.local_ip + ':8080';
   }
 
-  // BTC price in header (live from engine)
-  if (eng.btc_price && eng.btc_price > 0) {
-    document.getElementById('btc-price').textContent = '$' + Math.round(eng.btc_price).toLocaleString('en-US');
+  // BTC price in header — prefer server-fetched price (always fresh)
+  const livePrice = d.btc_price || eng.btc_price || 0;
+  if (livePrice > 0) {
+    document.getElementById('btc-price').textContent = '$' + Math.round(livePrice).toLocaleString('en-US');
   }
 
   // ── Activity panel (what is the bot doing RIGHT NOW) ──────────────────────
@@ -1168,27 +1178,18 @@ async function saveSettings() {
   }
 }
 
-// ── BTC price via Binance public REST ─────────────────────────────────────────
-async function fetchBTCPrice() {
-  try {
-    const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT').then(r => r.json());
-    const p = parseFloat(r.price);
-    document.getElementById('btc-price').textContent = '$' + p.toLocaleString('en-US', {maximumFractionDigits:0});
-  } catch(e) {}
-}
-
 // ── Init ──────────────────────────────────────────────────────────────────────
+// BTC price is now fetched server-side every 1s (web_app.py _btc_price_loop)
+// and delivered via /api/status — no browser-side Binance calls needed.
 initChart();
 loadSettings();
-poll();
-fetchBTCPrice();
-// Poll 1s when engine running, 3s when idle
+// Adaptive poll: 1s when engine running, 3s when idle
 function _scheduleNextPoll() {
   const running = document.getElementById('status-text').textContent !== 'Stopped';
   setTimeout(async () => { await poll(); _scheduleNextPoll(); }, running ? 1000 : 3000);
 }
+poll();
 _scheduleNextPoll();
-setInterval(fetchBTCPrice, 8000);
 </script>
 </body>
 </html>

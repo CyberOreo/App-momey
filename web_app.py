@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,8 +26,25 @@ _bot_process: Optional[subprocess.Popen] = None
 _log_lines: list[str] = []
 _log_lock = threading.Lock()
 MAX_LOGS = 200
+_btc_price: float = 0.0
+_btc_lock = threading.Lock()
 
 ROOT = Path(__file__).parent
+
+
+def _btc_price_loop() -> None:
+    """Background thread — fetches BTC/USDT price from Binance every second."""
+    global _btc_price
+    url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as r:
+                data = json.loads(r.read())
+            with _btc_lock:
+                _btc_price = float(data["price"])
+        except Exception:
+            pass
+        time.sleep(1)
 
 
 def _local_ip() -> str:
@@ -155,6 +173,7 @@ def _get_stats() -> dict:
         "open_pos_list": open_pos,
         "engine": engine,
         "local_ip": _local_ip(),
+        "btc_price": round(_btc_price, 2),
     }
 
 
@@ -305,6 +324,8 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = 8080
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+
+    threading.Thread(target=_btc_price_loop, daemon=True).start()
 
     def _open_browser():
         time.sleep(1.2)
