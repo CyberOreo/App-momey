@@ -322,16 +322,21 @@ class Handler(BaseHTTPRequestHandler):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port = 8080
+    port = int(os.environ.get("PORT", 8080))
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
 
     threading.Thread(target=_btc_price_loop, daemon=True).start()
 
-    def _open_browser():
-        time.sleep(1.2)
-        webbrowser.open(f"http://localhost:{port}")
-
-    threading.Thread(target=_open_browser, daemon=True).start()
+    # Only open browser when running locally (not on cloud platforms)
+    _is_cloud = any(os.environ.get(v) for v in (
+        "RAILWAY_ENVIRONMENT", "RENDER", "HEROKU_APP_NAME",
+        "FLY_APP_NAME", "CLOUD_RUN_SERVICE",
+    ))
+    if not _is_cloud:
+        def _open_browser():
+            time.sleep(1.2)
+            webbrowser.open(f"http://localhost:{port}")
+        threading.Thread(target=_open_browser, daemon=True).start()
 
     print(f"\n  PolyBTC Trader  →  http://localhost:{port}")
     print("  Press Ctrl+C to stop.\n")

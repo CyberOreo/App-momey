@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: polybtc-trader
+    runtime: python
+    buildCommand: pip install -r requirements_core.txt
+    startCommand: python web_app.py
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PAPER_TRADING
+        value: "true"
+      - key: PAPER_BALANCE
+        value: "1000"

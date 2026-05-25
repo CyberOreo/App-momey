@@ -131,12 +131,20 @@ class BotOrchestrator:
         """Initialise all subsystems."""
         from src.core.database import init_db
         from src.core.logging_setup import setup_logging
-        from src.market.indicators import IndicatorEngine
-        from src.market.analysis import MultiTimeframeAnalyzer
-        from src.trading.signals import SignalGenerator
-        from src.monitoring.metrics import MetricsCollector
-        from src.monitoring.telegram_alerts import TelegramAlerter
-        from src.analytics.journal import TradeJournal
+
+        try:
+            from src.market.indicators import IndicatorEngine
+            from src.market.analysis import MultiTimeframeAnalyzer
+            from src.trading.signals import SignalGenerator
+            from src.monitoring.metrics import MetricsCollector
+            from src.monitoring.telegram_alerts import TelegramAlerter
+            from src.analytics.journal import TradeJournal
+        except ImportError as _ie:
+            raise RuntimeError(
+                f"Standard bot requires additional packages: {_ie}\n"
+                "Install with: pip install -r requirements.txt\n"
+                "Use the ⚡ 5-MIN ENGINE button instead — it works without extra installs."
+            ) from _ie
 
         logger.info("Initialising PolyBTC Trader", mode="paper" if self._settings.paper_trading else "LIVE")
 
