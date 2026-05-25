@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="PolyBTC"/>
+<meta name="theme-color" content="#0d0d1a"/>
 <title>PolyBTC Trader</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
@@ -242,6 +246,75 @@
   .eng-val { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .eng-bar-wrap { height: 6px; background: var(--bg2); border-radius: 3px; margin-top: 6px; overflow: hidden; }
   .eng-bar { height: 100%; border-radius: 3px; transition: width .5s, background .5s; }
+
+  /* ── iPhone / mobile ── */
+  .iphone-banner {
+    display: none;
+    background: rgba(0,212,255,0.10); border: 1px solid var(--accent2);
+    border-radius: var(--radius); padding: 10px 14px;
+    font-size: 12px; color: var(--accent2); margin-bottom: 16px;
+    align-items: center; gap: 10px;
+  }
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  @media (max-width: 640px) {
+    /* Header */
+    header {
+      padding: 10px 14px;
+      padding-top: max(10px, env(safe-area-inset-top));
+      flex-wrap: wrap; gap: 8px;
+    }
+    .logo { font-size: 16px; }
+    .btc-price { font-size: 18px; }
+    .status-badge { padding: 4px 10px; font-size: 12px; }
+
+    /* Main */
+    main { padding: 12px 14px; }
+
+    /* Tabs — horizontal scroll, no wrap */
+    .tabs {
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      flex-wrap: nowrap; padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { white-space: nowrap; flex-shrink: 0; padding: 8px 14px; font-size: 12px; }
+
+    /* Controls — stack vertically */
+    .controls { flex-direction: column; align-items: stretch; gap: 10px; padding: 14px; }
+    .btn { padding: 14px 20px; font-size: 15px; min-height: 50px; border-radius: 10px; }
+    .mode-toggle { justify-content: center; }
+
+    /* Metric cards */
+    .cards { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .card { padding: 14px 12px; }
+    .card-value { font-size: 20px; }
+
+    /* Engine panel */
+    .engine-panel { padding: 14px; }
+    .engine-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .eng-val { font-size: 17px; }
+
+    /* Two-col */
+    .two-col { grid-template-columns: 1fr; gap: 14px; }
+
+    /* Chart — hide on tiny screens to save space */
+    .chart-wrap { display: none; }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    td, th { padding: 8px 10px; font-size: 12px; }
+
+    /* Logs */
+    .log-box { height: 260px; font-size: 11px; }
+
+    /* iPhone network hint */
+    .iphone-banner { display: flex; }
+
+    /* Settings */
+    .settings-grid { grid-template-columns: 1fr; }
+    .field input, .field select { font-size: 16px; } /* prevent iOS zoom on focus */
+  }
 </style>
 </head>
 <body>
@@ -270,6 +343,11 @@
 
     <div id="paper-banner" class="warning-banner" style="display:none">
       ⚠️  <strong>PAPER TRADING MODE</strong> — No real money is at risk. Toggle Live in Settings to trade with real funds.
+    </div>
+
+    <!-- iPhone network hint (shown only on small screens) -->
+    <div class="iphone-banner" id="iphone-banner">
+      📱 <span>iPhone access: open Safari → <strong id="iphone-url">http://…:8080</strong></span>
     </div>
 
     <!-- Controls -->
@@ -710,6 +788,11 @@ function updateDashboard(d) {
 
   // Last update
   document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+  // iPhone network banner
+  if (d.local_ip && d.local_ip !== 'localhost') {
+    document.getElementById('iphone-url').textContent = 'http://' + d.local_ip + ':8080';
+  }
 
   // Recent trades
   renderTradesTable(d.recent_trades || [], 'trades-body', 7);

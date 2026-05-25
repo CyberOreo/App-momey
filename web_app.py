@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -26,6 +27,17 @@ _log_lock = threading.Lock()
 MAX_LOGS = 200
 
 ROOT = Path(__file__).parent
+
+
+def _local_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "localhost"
 
 
 def _is_running() -> bool:
@@ -142,6 +154,7 @@ def _get_stats() -> dict:
         "recent_trades": trades[:15],
         "open_pos_list": open_pos,
         "engine": engine,
+        "local_ip": _local_ip(),
     }
 
 
