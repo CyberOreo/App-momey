@@ -174,6 +174,20 @@ async def _main(args: argparse.Namespace) -> None:
     paper = _Paper(settings.paper_balance)
     _trade_count = [0]
 
+    # Telegram controller — active only if token + chat_id are configured
+    _tg = None
+    _tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    _tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if _tg_token and _tg_chat:
+        from src.monitoring.telegram_ctrl import TelegramController
+        _tg = TelegramController(
+            token=_tg_token,
+            chat_id=_tg_chat,
+            engine=None,  # set after engine is created
+            paper=paper,
+            stop_event=_stop,
+        )
+
     async def _handle_decision(decision) -> None:
         _trade_count[0] += 1
         logger.success(
@@ -187,12 +201,16 @@ async def _main(args: argparse.Namespace) -> None:
             logger.debug(f"  → {r}")
         if settings.paper_trading:
             paper.enter(decision)
+        if _tg:
+            asyncio.create_task(_tg.alert_trade(decision))
 
     engine = FiveMinEngine(
         balance=settings.paper_balance,
         max_risk_pct=settings.max_risk_per_trade_pct,
         on_decision=lambda d: asyncio.create_task(_handle_decision(d)),
     )
+    if _tg:
+        _tg._engine = engine
 
     # ── Chainlink oracle ───────────────────────────────────────────────────────
     def _oracle_cb(oracle_price) -> None:
@@ -296,7 +314,16 @@ async def _main(args: argparse.Namespace) -> None:
                         wd = engine._price_buffer.window_delta
                         direction = paper.open.get("direction", "YES")
                         won = (wd > 0) if direction == "YES" else (wd < 0)
-                        paper.close(1.0 if won else 0.0, "win" if won else "loss")
+                        exit_price = 1.0 if won else 0.0
+                        outcome = "win" if won else "loss"
+                        paper.close(exit_price, outcome)
+                        if _tg:
+                            ps = paper.stats()
+                            closed = ps.get("recent", [{}])[0]
+                            asyncio.create_task(_tg.alert_close(
+                                direction, closed.get("pnl", 0),
+                                outcome, ps["balance"],
+                            ))
                 _last_close_window[0] = wts
                 st = engine.status()
                 st.update({
@@ -326,6 +353,8 @@ async def _main(args: argparse.Namespace) -> None:
     await multi_feed.start()
     await funding.start()
     await poly_feed.start()
+    if _tg:
+        await _tg.start()
 
     tasks = [
         asyncio.create_task(_binance_feed()),
@@ -336,6 +365,8 @@ async def _main(args: argparse.Namespace) -> None:
         await _stop.wait()
     finally:
         logger.info("[ENGINE] Shutting down")
+        if _tg:
+            await _tg.stop()
         await engine.stop()
         await oracle.stop()
         await multi_feed.stop()
