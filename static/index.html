@@ -882,19 +882,27 @@ function updateChart(trades) {
 }
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
+// Strip ANSI escape codes (e.g. \x1b[32m, [0m, □[36m artifacts from loguru)
+function stripAnsi(s) {
+  return s.replace(/(\x1b|)?\[[0-9;]*[mGKHF]/g, '')
+           .replace(/\[[0-9;]*[mGKHF]/g, '');
+}
+
 let _lastLogCount = 0;
 function updateLogs(lines) {
   if (lines.length === _lastLogCount) return;
   _lastLogCount = lines.length;
   const box = document.getElementById('log-box');
   box.innerHTML = lines.map(l => {
+    const clean = stripAnsi(l);
     let cls = '';
-    const ll = l.toLowerCase();
+    const ll = clean.toLowerCase();
     if (ll.includes('error') || ll.includes('exception')) cls = 'log-error';
     else if (ll.includes('warn')) cls = 'log-warn';
-    else if (ll.includes('signal') || ll.includes('trade') || ll.includes('profit')) cls = 'log-success';
+    else if (ll.includes('success') || ll.includes('signal') || ll.includes('trade') || ll.includes('profit') || ll.includes('engine')) cls = 'log-success';
     else if (ll.includes('info')) cls = 'log-info';
-    return `<span class="${cls}">${l}</span>`;
+    const safe = clean.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<span class="${cls}">${safe}</span>`;
   }).join('\n');
   box.scrollTop = box.scrollHeight;
 }
