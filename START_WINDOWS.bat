@@ -77,16 +77,22 @@ if not exist "venv\Scripts\python.exe" (
         pause
         exit /b 1
     )
-    echo  Installing dependencies...
-    venv\Scripts\python.exe -m pip install --upgrade pip --quiet
-    venv\Scripts\pip.exe install -r requirements_core.txt --quiet
+    echo  Installing dependencies (this takes 1-2 minutes on first run^)...
+    echo  You will see each package as it installs. Please wait.
+    echo.
+    venv\Scripts\python.exe -m pip install --upgrade pip --no-cache-dir --quiet
+    venv\Scripts\pip.exe install -r requirements_core.txt --no-cache-dir
     if !errorlevel! neq 0 (
+        echo.
         echo  [ERROR] Failed to install dependencies.
         echo  Check your internet connection and try again.
+        echo  You can also try running manually:
+        echo    venv\Scripts\pip install -r requirements_core.txt --no-cache-dir
         pause
         exit /b 1
     )
-    echo  Dependencies installed successfully.
+    echo.
+    echo  All dependencies installed successfully!
     echo.
 )
 
