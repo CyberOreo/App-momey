@@ -224,6 +224,54 @@
     display: flex; align-items: center; gap: 10px;
   }
 
+  /* ── Bot activity panel ── */
+  .activity-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 20px;
+    margin-bottom: 24px;
+    border-left: 4px solid var(--yellow);
+  }
+  .activity-title {
+    font-size: 11px; font-weight: 700; color: var(--yellow);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px;
+  }
+  .activity-reason {
+    font-size: 14px; color: var(--text); font-family: 'Courier New', monospace;
+    padding: 8px 12px; background: var(--bg2); border-radius: 6px;
+    border-left: 3px solid var(--accent);
+  }
+  .signal-row {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+  }
+  .signal-chip {
+    padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;
+    background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .signal-chip.active { background: rgba(0,230,118,0.12); border-color: var(--green); color: var(--green); }
+  .signal-chip.warn   { background: rgba(255,23,68,0.12);  border-color: var(--red);   color: var(--red); }
+
+  /* ── Markets panel ── */
+  .markets-panel {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .markets-title {
+    font-size: 11px; font-weight: 700; color: var(--accent2);
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .market-row {
+    display: grid; grid-template-columns: 1fr 80px 80px 90px 90px;
+    gap: 8px; padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 12px; align-items: center;
+  }
+  .market-row:last-child { border-bottom: none; }
+  .market-q { color: var(--text); }
+  .market-col { text-align: center; color: var(--muted); }
+  .no-markets { color: var(--muted); font-size: 13px; padding: 8px 0; text-align: center; }
+
   /* ── 5-min Engine panel ── */
   .engine-panel {
     background: var(--card); border: 1px solid var(--border);
@@ -446,6 +494,29 @@
           <div style="font-size:11px;color:var(--muted)" id="eng-fv-edge">vs market price</div>
         </div>
       </div>
+    </div>
+
+    <!-- Bot live activity — what it's doing RIGHT NOW -->
+    <div class="activity-panel" id="activity-panel" style="display:none">
+      <div class="activity-title">🤖 Kaj bot počne zdaj</div>
+      <div class="activity-reason" id="activity-reason">—</div>
+      <div class="signal-row" id="signal-chips"></div>
+    </div>
+
+    <!-- Active Polymarket markets being watched -->
+    <div class="markets-panel" id="markets-panel" style="display:none">
+      <div class="markets-title">
+        <span>📊 Polymarket — aktivni 5-min BTC trgi</span>
+        <span style="font-size:11px;color:var(--muted)" id="markets-count">0 najdenih</span>
+      </div>
+      <div class="market-row" style="font-size:10px;color:var(--muted);font-weight:700">
+        <div>VPRAŠANJE</div>
+        <div class="market-col">YES cena</div>
+        <div class="market-col">NO cena</div>
+        <div class="market-col">Likvidnost</div>
+        <div class="market-col">Čas do konca</div>
+      </div>
+      <div id="markets-body"><div class="no-markets">Čakam na scanner...</div></div>
     </div>
 
     <!-- P&L chart + open positions -->
@@ -794,6 +865,81 @@ function updateDashboard(d) {
     document.getElementById('iphone-url').textContent = 'http://' + d.local_ip + ':8080';
   }
 
+  // BTC price in header (live from engine)
+  if (eng.btc_price && eng.btc_price > 0) {
+    document.getElementById('btc-price').textContent = '$' + Math.round(eng.btc_price).toLocaleString('en-US');
+  }
+
+  // ── Activity panel (what is the bot doing RIGHT NOW) ──────────────────────
+  const actPanel = document.getElementById('activity-panel');
+  const actReason = document.getElementById('activity-reason');
+  const sigChips = document.getElementById('signal-chips');
+  if (eng.mode === 'five_min_engine' && d.running) {
+    actPanel.style.display = 'block';
+    actReason.textContent = eng.no_trade_reason || '—';
+
+    // Confidence bar color
+    const conf = eng.confidence || 0;
+    actReason.style.borderLeftColor =
+      conf >= 62 ? 'var(--green)' : conf >= 40 ? 'var(--yellow)' : 'var(--red)';
+
+    // Signal chips — mini summary of each signal
+    const chips = [
+      { label: `Delta ${(eng.window_delta_pct||0) >= 0 ? '+' : ''}${(eng.window_delta_pct||0).toFixed(3)}%`,
+        ok: Math.abs(eng.window_delta_pct||0) >= 0.004 },
+      { label: `Vel ${(eng.velocity_30s||0) >= 0 ? '+' : ''}${(eng.velocity_30s||0).toFixed(3)}%`,
+        ok: Math.abs(eng.velocity_30s||0) > 0.003 },
+      { label: `VPIN ${(eng.vpin||0).toFixed(2)}`,
+        ok: (eng.vpin||0) > 0.4 },
+      { label: `Oracle ${eng.oracle_confirms || '—'}`,
+        ok: eng.oracle_confirms !== null && eng.oracle_confirms !== undefined && eng.oracle_confirms !== 'null',
+        warn: false },
+      { label: `Vote ${(eng.consensus||'?').toUpperCase()}`,
+        ok: eng.consensus === 'up' || eng.consensus === 'down' },
+      { label: `Conf ${conf.toFixed(0)}/100`,
+        ok: conf >= 62, warn: conf < 30 },
+      { label: `Edge ${(eng.edge||0) >= 0 ? '+' : ''}${(eng.edge||0).toFixed(3)}`,
+        ok: (eng.edge||0) > 0.05 },
+      { label: eng.good_trading_hour ? '🟢 Good hour' : '🔴 Dead hour',
+        ok: !!eng.good_trading_hour, warn: !eng.good_trading_hour },
+    ];
+    sigChips.innerHTML = chips.map(c =>
+      `<span class="signal-chip ${c.warn ? 'warn' : c.ok ? 'active' : ''}">${c.label}</span>`
+    ).join('');
+  } else {
+    actPanel.style.display = 'none';
+    sigChips.innerHTML = '';
+  }
+
+  // ── Markets panel ─────────────────────────────────────────────────────────
+  const markets = eng.active_markets || [];
+  const mkPanel = document.getElementById('markets-panel');
+  const mkBody = document.getElementById('markets-body');
+  const mkCount = document.getElementById('markets-count');
+  if (eng.mode === 'five_min_engine' && d.running) {
+    mkPanel.style.display = 'block';
+    mkCount.textContent = markets.length + ' najdenih';
+    if (!markets.length) {
+      mkBody.innerHTML = '<div class="no-markets">Scanner aktiven — čakam na 5-min BTC trge na Polymarketu...</div>';
+    } else {
+      mkBody.innerHTML = markets.map(m => {
+        const secs = m.seconds_left || 0;
+        const timeStr = secs > 60 ? Math.floor(secs/60) + 'm ' + (secs%60) + 's' : secs + 's';
+        const yesCol = m.yes_price > 0.6 ? 'pos' : m.yes_price < 0.4 ? 'neg' : 'neu';
+        const noCol  = m.no_price  > 0.6 ? 'pos' : m.no_price  < 0.4 ? 'neg' : 'neu';
+        return `<div class="market-row">
+          <div class="market-q">${m.question}</div>
+          <div class="market-col ${yesCol}">${m.yes_price.toFixed(3)}</div>
+          <div class="market-col ${noCol}">${m.no_price.toFixed(3)}</div>
+          <div class="market-col">$${(m.liquidity||0).toLocaleString()}</div>
+          <div class="market-col">${timeStr}</div>
+        </div>`;
+      }).join('');
+    }
+  } else {
+    mkPanel.style.display = 'none';
+  }
+
   // Recent trades
   renderTradesTable(d.recent_trades || [], 'trades-body', 7);
   renderTradesTable(d.recent_trades || [], 'all-trades-body', 8);
@@ -1036,8 +1182,13 @@ initChart();
 loadSettings();
 poll();
 fetchBTCPrice();
-setInterval(poll, 3000);
-setInterval(fetchBTCPrice, 10000);
+// Poll 1s when engine running, 3s when idle
+function _scheduleNextPoll() {
+  const running = document.getElementById('status-text').textContent !== 'Stopped';
+  setTimeout(async () => { await poll(); _scheduleNextPoll(); }, running ? 1000 : 3000);
+}
+_scheduleNextPoll();
+setInterval(fetchBTCPrice, 8000);
 </script>
 </body>
 </html>

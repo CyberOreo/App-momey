@@ -548,6 +548,18 @@ async def _main(args: argparse.Namespace) -> None:
 
         async def _on_markets(markets) -> None:
             logger.info(f"[ENGINE] {len(markets)} active 5-min markets in scope")
+            # Store market summaries in engine for dashboard display
+            engine._active_markets = [
+                {
+                    "question": (m.question or "")[:60],
+                    "yes_price": round(m.yes_token.price if m.yes_token else 0, 3),
+                    "no_price": round(m.no_token.price if m.no_token else 0, 3),
+                    "liquidity": round(getattr(m, "liquidity", 0) or 0, 0),
+                    "volume": round(getattr(m, "volume", 0) or 0, 0),
+                    "seconds_left": max(0, round((m.end_date - __import__("datetime").datetime.utcnow()).total_seconds())) if m.end_date else 0,
+                }
+                for m in (markets or [])
+            ][:5]
 
         logger.info(
             "[ENGINE] All subsystems ready",

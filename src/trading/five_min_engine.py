@@ -358,6 +358,11 @@ class FiveMinEngine:
         self._consensus_boost: float = 0.0
         self._funding_signal: float = 0.0             # +1=bearish pressure, -1=bullish
 
+        # Live monitoring state — updated every second for the dashboard
+        self._last_signals: dict = {}
+        self._no_trade_reason: str = "Waiting for data..."
+        self._active_markets: list = []
+
     # ── Feed callbacks ────────────────────────────────────────────────────────
 
     def on_price(self, price: float) -> None:
@@ -446,12 +451,17 @@ class FiveMinEngine:
             self._last_entry_window = wts
             return
 
-        # ── Only analyse within entry window ──────────────────────────────────
-        if secs > self.ENTRY_WINDOW_START or secs < 2:
-            return
-
-        # ── Compute all signals every second ──────────────────────────────────
+        # ── Always compute signals for dashboard visibility ───────────────────
         signals = self._compute_signals(secs)
+        self._last_signals = signals
+
+        # ── Only act within entry window ──────────────────────────────────────
+        if secs > self.ENTRY_WINDOW_START or secs < 2:
+            if secs > self.ENTRY_WINDOW_START:
+                self._no_trade_reason = f"Waiting — T-{secs:.0f}s until entry window opens at T-{self.ENTRY_WINDOW_START}s"
+            else:
+                self._no_trade_reason = "Window closing — too late to enter"
+            return
 
         # Log every 5 seconds during the entry window for monitoring
         if int(secs) % 5 == 0:
@@ -469,13 +479,16 @@ class FiveMinEngine:
         already_traded = (wts == self._last_entry_window)
 
         if already_traded:
+            self._no_trade_reason = "Already traded this window"
             return
 
-        if (in_preferred and signals['confidence'] >= self.MIN_CONFIDENCE) or \
-           (at_deadline and signals['confidence'] >= self.MIN_CONFIDENCE * 0.85):
+        conf = signals['confidence']
+        if (in_preferred and conf >= self.MIN_CONFIDENCE) or \
+           (at_deadline and conf >= self.MIN_CONFIDENCE * 0.85):
             decision = self._build_decision(signals, secs, book)
             if decision and decision.action != 'WAIT' and decision.action != 'SKIP':
                 self._last_entry_window = wts
+                self._no_trade_reason = f"TRADED: {decision.action} @ {decision.entry_price:.3f}"
                 logger.success(
                     f"[ENGINE] {decision.action} | conf={decision.confidence:.0f} | "
                     f"T-{secs:.0f}s | delta={signals['window_delta']*100:+.3f}% | "
@@ -483,6 +496,22 @@ class FiveMinEngine:
                 )
                 if self._on_decision:
                     self._on_decision(decision)
+            else:
+                self._no_trade_reason = f"SKIP — edge too small or delta too flat (conf={conf:.0f})"
+        else:
+            # Build human-readable reason for no trade
+            if conf < self.MIN_CONFIDENCE:
+                missing = self.MIN_CONFIDENCE - conf
+                self._no_trade_reason = (
+                    f"Confidence {conf:.0f}/100 — need {self.MIN_CONFIDENCE:.0f} "
+                    f"(missing {missing:.0f} pts) | "
+                    f"delta={signals['window_delta']*100:+.3f}% | "
+                    f"window: T-{secs:.0f}s"
+                )
+            elif not in_preferred and not at_deadline:
+                self._no_trade_reason = f"Analysing — T-{secs:.0f}s | ideal entry: T-{self.ENTRY_PREFERRED_START}s to T-{self.ENTRY_PREFERRED_END}s"
+            else:
+                self._no_trade_reason = f"Watching — conf={conf:.0f} | T-{secs:.0f}s"
 
     # ── Signal computation ────────────────────────────────────────────────────
 
@@ -912,4 +941,11 @@ class FiveMinEngine:
             # Fair value gap
             "fair_value_yes": round(self._fair_value_yes(self._price_buffer.window_delta), 3),
             "fair_value_no": round(1.0 - self._fair_value_yes(self._price_buffer.window_delta), 3),
+            # Live monitoring
+            "no_trade_reason": self._no_trade_reason,
+            "confidence": round(self._last_signals.get("confidence", 0), 1),
+            "signal_direction": self._last_signals.get("direction", "—"),
+            "velocity_30s": round(self._last_signals.get("velocity_30s", 0) * 100, 4),
+            "edge": round(self._last_signals.get("edge", 0), 3),
+            "active_markets": self._active_markets,
         }
