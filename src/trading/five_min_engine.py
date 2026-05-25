@@ -912,6 +912,4 @@ class FiveMinEngine:
             # Fair value gap
             "fair_value_yes": round(self._fair_value_yes(self._price_buffer.window_delta), 3),
             "fair_value_no": round(1.0 - self._fair_value_yes(self._price_buffer.window_delta), 3),
-            "yes_ask": self._book.yes_ask,
-            "no_ask": self._book.no_ask,
         }
